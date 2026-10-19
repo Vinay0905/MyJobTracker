@@ -1,4 +1,6 @@
-# DevRadar - Autonomous Engineering Career Radar & Market Telemetry Engine
+# MyJobTracker (DevRadar)
+
+Autonomous engineering career radar and market telemetry engine
 
 **DevRadar** is an automated, production-grade telemetry and skill extraction engine designed for software engineers, systems programmers, and AI researchers. It pulls open roles directly from public career APIs of Tier-1 technology companies (NVIDIA, Epic Games, Careem, etc.), filters out non-technical roles, extracts exact required/preferred skills with cited sentence quotes from the job descriptions, safely tracks job lifecycles without data loss, and delivers real-time market trends alongside an interactive **"1-Skill Away"** candidate gap analyzer.
 
@@ -108,5 +110,3 @@ npm install
 npm run dev
 ```
 Open `http://127.0.0.1:5173` in your browser. All `/api/*` requests will be proxied automatically to `http://127.0.0.1:8000`.
-# MyJobTracker
-# MyJobTracker

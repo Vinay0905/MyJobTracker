@@ -1,0 +1,39 @@
+# Environment secrets (keep example templates versioned)
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+
+# Local databases and runtime files
+*.db
+*.sqlite
+*.sqlite3
+*.log
+
+# JavaScript dependencies and build output
+node_modules/
+**/node_modules/
+coverage/
+frontend/dist/
+devradar-ui/dist/
+
+# Editors and operating system
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
