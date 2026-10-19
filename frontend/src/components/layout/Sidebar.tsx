@@ -164,8 +164,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       className={`font-mono text-[10px] px-1.5 py-0.5 rounded ${
                         isSelected
                           ? 'bg-primary/20 text-primary font-semibold'
-                          : 'bg-surface-container-high text-outline'
+                          : comp.active_jobs_count > 0
+                          ? 'bg-surface-container-high text-outline font-medium'
+                          : 'bg-surface-container-lowest text-outline/40 border border-outline-variant/20'
                       }`}
+                      title={comp.active_jobs_count === 0 ? "Standby / Unsynced (Toggle Demo Mode for sample fixtures)" : `${comp.active_jobs_count} active roles`}
                     >
                       {comp.active_jobs_count}
                     </span>

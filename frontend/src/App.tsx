@@ -66,12 +66,21 @@ export const App: React.FC = () => {
   const [selectedCompany, setSelectedCompany] = useState<string | null>(null);
   const [selectedSort, setSelectedSort] = useState<string>('newest_discovered');
 
+  // Pagination State (Default 12 per page)
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(12);
+
   const [filter0to6Yoe, setFilter0to6Yoe] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [selectedRoleFocus, setSelectedRoleFocus] = useState<string[]>([]);
   const [selectedLocation, setSelectedLocation] = useState<string | null>(null);
   const [selectedSkill, setSelectedSkill] = useState<string | null>(null);
+
+  // Reset page to 1 whenever any filter changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [selectedCategory, selectedCompany, selectedSort, selectedLocation, selectedRoleFocus, selectedSkill, searchQuery, filter0to6Yoe, pageSize]);
 
   // Load all jobs and top skills
   const loadRadarData = useCallback(async () => {
@@ -88,6 +97,8 @@ export const App: React.FC = () => {
           search: searchQuery,
           include_demo: includeDemo,
           max_required_yoe: filter0to6Yoe ? 6 : null,
+          page: currentPage,
+          pageSize: pageSize,
         }),
         fetchTopSkills(selectedCategory, includeDemo),
         fetchCompanies(includeDemo),
@@ -105,7 +116,7 @@ export const App: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [selectedCategory, selectedCompany, selectedSort, selectedLocation, selectedRoleFocus, selectedSkill, searchQuery, includeDemo, filter0to6Yoe]);
+  }, [selectedCategory, selectedCompany, selectedSort, selectedLocation, selectedRoleFocus, selectedSkill, searchQuery, includeDemo, filter0to6Yoe, currentPage, pageSize]);
 
   // Load telemetry
   const loadTelemetryData = useCallback(async () => {
@@ -303,6 +314,8 @@ export const App: React.FC = () => {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [currentTab, jobs, selectedJobIndex, isDrawerOpen, isShortcutsOpen]);
+
+  const totalPages = Math.max(1, Math.ceil(totalJobsCount / pageSize));
 
   return (
     <div className="min-h-screen flex flex-col bg-surface text-on-surface">
@@ -529,19 +542,148 @@ export const App: React.FC = () => {
                   </button>
                 </div>
               ) : (
-                <section className="grid grid-cols-1 lg:grid-cols-2 gap-space-md pb-space-xl">
-                  {jobs.map((job, idx) => (
-                    <JobCard
-                      key={job.job_id}
-                      job={job}
-                      isSelected={selectedJobIndex === idx}
-                      onInspect={(id) => {
-                        setSelectedJobIndex(idx);
-                        handleInspectJob(id);
-                      }}
-                      onSelectSkill={(s) => setSelectedSkill(s)}
-                    />
-                  ))}
+                <section className="flex flex-col gap-space-md pb-space-xl">
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-space-md">
+                    {jobs.map((job, idx) => (
+                      <JobCard
+                        key={job.job_id}
+                        job={job}
+                        isSelected={selectedJobIndex === idx}
+                        onInspect={(id) => {
+                          setSelectedJobIndex(idx);
+                          handleInspectJob(id);
+                        }}
+                        onSelectSkill={(s) => setSelectedSkill(s)}
+                      />
+                    ))}
+                  </div>
+
+                  {/* Cyberpunk Pagination Bar */}
+                  {totalJobsCount > 0 && (
+                    <div className="flex flex-wrap items-center justify-between gap-4 p-4 rounded-xl bg-surface-container-low border border-outline-variant font-mono text-xs mt-2">
+                      <div className="flex items-center gap-3">
+                        <span className="text-on-surface-variant">
+                          Showing{' '}
+                          <strong className="text-on-surface font-semibold">
+                            {(currentPage - 1) * pageSize + 1}
+                          </strong>{' '}
+                          –{' '}
+                          <strong className="text-on-surface font-semibold">
+                            {Math.min(currentPage * pageSize, totalJobsCount)}
+                          </strong>{' '}
+                          of{' '}
+                          <strong className="text-primary font-bold">{totalJobsCount}</strong> roles
+                        </span>
+
+                        <div className="hidden sm:flex items-center gap-1.5 border-l border-outline-variant/60 pl-3">
+                          <span className="text-outline text-[11px]">Per page:</span>
+                          {[12, 24, 48].map((size) => (
+                            <button
+                              key={size}
+                              onClick={() => {
+                                playKeyClick();
+                                setPageSize(size);
+                                setCurrentPage(1);
+                              }}
+                              className={`px-2 py-0.5 rounded text-[11px] transition-colors ${
+                                pageSize === size
+                                  ? 'bg-primary/20 text-primary font-bold border border-primary/40'
+                                  : 'text-outline hover:text-on-surface bg-surface-container-highest/40'
+                              }`}
+                            >
+                              {size}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => {
+                            playKeyClick();
+                            setCurrentPage(1);
+                          }}
+                          disabled={currentPage === 1}
+                          className="px-2.5 py-1 rounded bg-surface-container border border-outline-variant/60 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-surface-container-high transition-colors"
+                          title="First Page"
+                        >
+                          «
+                        </button>
+                        <button
+                          onClick={() => {
+                            playKeyClick();
+                            setCurrentPage((p) => Math.max(1, p - 1));
+                          }}
+                          disabled={currentPage === 1}
+                          className="px-3 py-1 rounded bg-surface-container border border-outline-variant/60 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-surface-container-high transition-colors flex items-center gap-1"
+                        >
+                          ‹ Prev
+                        </button>
+
+                        {/* Page Numbers */}
+                        <div className="flex items-center gap-1 px-1">
+                          {Array.from({ length: totalPages }, (_, i) => i + 1)
+                            .filter(
+                              (p) =>
+                                p === 1 ||
+                                p === totalPages ||
+                                Math.abs(p - currentPage) <= 2
+                            )
+                            .reduce<(number | string)[]>((acc, p, idx, arr) => {
+                              if (idx > 0 && p - (arr[idx - 1] as number) > 1) {
+                                acc.push('...');
+                              }
+                              acc.push(p);
+                              return acc;
+                            }, [])
+                            .map((item, idx) =>
+                              item === '...' ? (
+                                <span key={`ellipsis-${idx}`} className="px-1 text-outline">
+                                  …
+                                </span>
+                              ) : (
+                                <button
+                                  key={`page-${item}`}
+                                  onClick={() => {
+                                    playKeyClick();
+                                    setCurrentPage(item as number);
+                                  }}
+                                  className={`w-7 h-7 rounded flex items-center justify-center text-xs transition-colors ${
+                                    currentPage === item
+                                      ? 'bg-primary text-on-primary font-bold shadow-sm'
+                                      : 'bg-surface-container text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high border border-outline-variant/40'
+                                  }`}
+                                >
+                                  {item}
+                                </button>
+                              )
+                            )}
+                        </div>
+
+                        <button
+                          onClick={() => {
+                            playKeyClick();
+                            setCurrentPage((p) => Math.min(totalPages, p + 1));
+                          }}
+                          disabled={currentPage === totalPages}
+                          className="px-3 py-1 rounded bg-surface-container border border-outline-variant/60 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-surface-container-high transition-colors flex items-center gap-1"
+                        >
+                          Next ›
+                        </button>
+                        <button
+                          onClick={() => {
+                            playKeyClick();
+                            setCurrentPage(totalPages);
+                          }}
+                          disabled={currentPage === totalPages}
+                          className="px-2.5 py-1 rounded bg-surface-container border border-outline-variant/60 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-surface-container-high transition-colors"
+                          title="Last Page"
+                        >
+                          »
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </section>
               )}
             </>
