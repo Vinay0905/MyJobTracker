@@ -121,107 +121,107 @@ async def test_workday_never_fabricates_synthetic_descriptions():
 # 2. P0-2: Remove Implicit Candidate YOE Defaults
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
-async def test_unconfigured_candidate_profile_has_no_invented_yoe():
+async def test_unconfigured_candidate_profile_has_no_invented_yoe(memory_session: AsyncSession):
     """
     Verifies that when a candidate profile is unconfigured:
     1. overall_yoe is None (never defaulted to 3.0 or 4.5).
     2. Gap analysis marks experience_alignment as 'unknown_candidate_yoe'.
     3. analysis_complete is False with explicit configuration callout.
     """
-    async with async_session_factory() as session:
-        # Create a fresh candidate profile with NO YOE specified
-        cand_id = f"test_cand_{uuid.uuid4().hex[:6]}"
-        cand = CandidateProfile(candidate_id=cand_id, name="Test Anonymous", overall_yoe=None)
-        session.add(cand)
-        await session.commit()
+    session = memory_session
+    # Create a fresh candidate profile with NO YOE specified
+    cand_id = f"test_cand_{uuid.uuid4().hex[:6]}"
+    cand = CandidateProfile(candidate_id=cand_id, name="Test Anonymous", overall_yoe=None)
+    session.add(cand)
+    await session.commit()
 
-        analyzer = GapAnalyzerService(session)
-        result = await analyzer.analyze_candidate_gap(candidate_id=cand_id)
+    analyzer = GapAnalyzerService(session)
+    result = await analyzer.analyze_candidate_gap(candidate_id=cand_id)
 
-        assert result["candidate_yoe"] is None, f"Expected None, got {result['candidate_yoe']}"
-        assert result["experience_alignment"] == "unknown_candidate_yoe"
-        assert result["analysis_complete"] is False
-        assert "Configure your profile" in result["status_message"]
+    assert result["candidate_yoe"] is None, f"Expected None, got {result['candidate_yoe']}"
+    assert result["experience_alignment"] == "unknown_candidate_yoe"
+    assert result["analysis_complete"] is False
+    assert "Configure your profile" in result["status_message"]
 
-        # For individual analyzed roles, yoe_deficit is None and warning states unconfigured
-        for role in result["top_matched_roles"]:
-            assert role["has_experience_gap"] is False
-            assert role["yoe_deficit"] is None
-            assert role["yoe_gap_warning"] == "Candidate experience not configured"
+    # For individual analyzed roles, yoe_deficit is None and warning states unconfigured
+    for role in result["top_matched_roles"]:
+        assert role["has_experience_gap"] is False
+        assert role["yoe_deficit"] is None
+        assert role["yoe_gap_warning"] == "Candidate experience not configured"
 
 # ---------------------------------------------------------------------------
 # 3. P0-3: Strict Snapshot Binding in latest_skills (No Stale Fallback)
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
-async def test_latest_skills_bound_strictly_to_newest_snapshot_even_when_zero_skills():
+async def test_latest_skills_bound_strictly_to_newest_snapshot_even_when_zero_skills(memory_session: AsyncSession):
     """
     Proves regression fix:
     If Snapshot 1 has skills [C++, CUDA] and employer modifies description to text
     with 0 extracted skills in Snapshot 2, job.latest_skills MUST return [] and
     never fall back to Snapshot 1 skills.
     """
-    async with async_session_factory() as session:
-        comp = Company(
-            company_id=f"snap_comp_{uuid.uuid4().hex[:6]}",
-            name="Snapshot Test Corp",
-            canonical_category="Silicon & AI",
-        )
-        session.add(comp)
-        await session.flush()
+    session = memory_session
+    comp = Company(
+        company_id=f"snap_comp_{uuid.uuid4().hex[:6]}",
+        name="Snapshot Test Corp",
+        canonical_category="Silicon & AI",
+    )
+    session.add(comp)
+    await session.flush()
 
-        source = Source(
-            source_id=f"src_snap_{uuid.uuid4().hex[:6]}",
-            company_id=comp.company_id,
-            provider_type="greenhouse",
-            base_url="https://boards-api.greenhouse.io",
-            allowed_hosts='["boards-api.greenhouse.io"]',
-        )
-        session.add(source)
-        await session.commit()
+    source = Source(
+        source_id=f"src_snap_{uuid.uuid4().hex[:6]}",
+        company_id=comp.company_id,
+        provider_type="greenhouse",
+        base_url="https://boards-api.greenhouse.io",
+        allowed_hosts='["boards-api.greenhouse.io"]',
+    )
+    session.add(source)
+    await session.commit()
 
-        reconciler = SafeReconciliationEngine(session, consecutive_missing_threshold=2)
-        posting_id = f"job-snap-{uuid.uuid4().hex[:6]}"
+    reconciler = SafeReconciliationEngine(session, consecutive_missing_threshold=2)
+    posting_id = f"job-snap-{uuid.uuid4().hex[:6]}"
 
-        # Run 1: Description with C++ and CUDA
-        payload_v1 = [{
-            "provider_posting_id": posting_id,
-            "title": "Staff GPU Systems Engineer",
-            "department": "Compute",
-            "location": "Santa Clara, CA",
-            "apply_url": "https://example.com/apply",
-            "raw_html": "<p>Must have deep experience in C++ and CUDA kernel development.</p>",
-        }]
-        await reconciler.execute_sync_run(source, payload_v1, pagination_complete=True, requests_count=1)
+    # Run 1: Description with C++ and CUDA
+    payload_v1 = [{
+        "provider_posting_id": posting_id,
+        "title": "Staff GPU Systems Engineer",
+        "department": "Compute",
+        "location": "Santa Clara, CA",
+        "apply_url": "https://example.com/apply",
+        "raw_html": "<p>Must have deep experience in C++ and CUDA kernel development.</p>",
+    }]
+    await reconciler.execute_sync_run(source, payload_v1, pagination_complete=True, requests_count=1)
 
-        job_stmt = select(Job).options(
-            selectinload(Job.snapshots),
-            selectinload(Job.skills),
-        ).where(Job.source_id == source.source_id, Job.provider_posting_id == posting_id)
-        job = (await session.execute(job_stmt)).scalar_one()
+    job_stmt = select(Job).options(
+        selectinload(Job.snapshots),
+        selectinload(Job.skills),
+    ).where(Job.source_id == source.source_id, Job.provider_posting_id == posting_id)
+    job = (await session.execute(job_stmt)).scalar_one()
 
-        assert len(job.snapshots) == 1
-        assert len(job.latest_skills) == 2
-        skill_ids_v1 = {s.skill_id for s in job.latest_skills}
-        assert "cpp" in skill_ids_v1
-        assert "cuda" in skill_ids_v1
+    assert len(job.snapshots) == 1
+    assert len(job.latest_skills) == 2
+    skill_ids_v1 = {s.skill_id for s in job.latest_skills}
+    assert "cpp" in skill_ids_v1
+    assert "cuda" in skill_ids_v1
 
-        # Run 2: Employer rewrites description to generic team lead text with 0 technical skills
-        payload_v2 = [{
-            "provider_posting_id": posting_id,
-            "title": "Staff GPU Systems Engineer",
-            "department": "Compute",
-            "location": "Santa Clara, CA",
-            "apply_url": "https://example.com/apply",
-            "raw_html": "<p>Responsible for team management, agile sprint planning, and quarterly reviews.</p>",
-        }]
-        src = await session.get(Source, source.source_id)
-        await reconciler.execute_sync_run(src, payload_v2, pagination_complete=True, requests_count=1)
+    # Run 2: Employer rewrites description to generic team lead text with 0 technical skills
+    payload_v2 = [{
+        "provider_posting_id": posting_id,
+        "title": "Staff GPU Systems Engineer",
+        "department": "Compute",
+        "location": "Santa Clara, CA",
+        "apply_url": "https://example.com/apply",
+        "raw_html": "<p>Responsible for team management, agile sprint planning, and quarterly reviews.</p>",
+    }]
+    src = await session.get(Source, source.source_id)
+    await reconciler.execute_sync_run(src, payload_v2, pagination_complete=True, requests_count=1)
 
-        await session.refresh(job, ["snapshots", "skills"])
+    await session.refresh(job, ["snapshots", "skills"])
 
-        assert len(job.snapshots) == 2, "Expected 2 snapshots"
-        # CRITICAL ASSERT: latest_skills must return [] for Snapshot 2, NOT fallback to Snapshot 1!
-        assert job.latest_skills == [], f"Expected empty skills on newest snapshot, got {job.latest_skills}"
+    assert len(job.snapshots) == 2, "Expected 2 snapshots"
+    # CRITICAL ASSERT: latest_skills must return [] for Snapshot 2, NOT fallback to Snapshot 1!
+    assert job.latest_skills == [], f"Expected empty skills on newest snapshot, got {job.latest_skills}"
 
 # ---------------------------------------------------------------------------
 # 4. P0-4: SSRF Allowlist and Redirect Guards
@@ -269,88 +269,88 @@ async def test_ssrf_rejects_empty_allowlist_unlisted_hosts_and_unvalidated_redir
 # 5. P0-4: Reconciliation Safety Against Sudden Inventory Drops (>50%)
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
-async def test_reconciliation_volume_drop_prevents_catastrophic_closures():
+async def test_reconciliation_volume_drop_prevents_catastrophic_closures(memory_session: AsyncSession):
     """
     Verifies that if a previously populated source suddenly drops by >50%
     in a single run, is_reconciliation_safe is set to False, preventing
     catastrophic mass closure of genuine active roles.
     """
-    async with async_session_factory() as session:
-        comp = Company(
-            company_id=f"drop_comp_{uuid.uuid4().hex[:6]}",
-            name="Drop Guard Studio",
-            canonical_category="Game Studio",
-        )
-        session.add(comp)
-        await session.flush()
+    session = memory_session
+    comp = Company(
+        company_id=f"drop_comp_{uuid.uuid4().hex[:6]}",
+        name="Drop Guard Studio",
+        canonical_category="Game Studio",
+    )
+    session.add(comp)
+    await session.flush()
 
-        source = Source(
-            source_id=f"src_drop_{uuid.uuid4().hex[:6]}",
-            company_id=comp.company_id,
-            provider_type="greenhouse",
-            base_url="https://boards-api.greenhouse.io",
-            allowed_hosts='["boards-api.greenhouse.io"]',
-        )
-        session.add(source)
-        await session.commit()
+    source = Source(
+        source_id=f"src_drop_{uuid.uuid4().hex[:6]}",
+        company_id=comp.company_id,
+        provider_type="greenhouse",
+        base_url="https://boards-api.greenhouse.io",
+        allowed_hosts='["boards-api.greenhouse.io"]',
+    )
+    session.add(source)
+    await session.commit()
 
-        reconciler = SafeReconciliationEngine(session, consecutive_missing_threshold=2)
+    reconciler = SafeReconciliationEngine(session, consecutive_missing_threshold=2)
 
-        # Ingest 12 active roles initially
-        postings = [
-            {
-                "provider_posting_id": f"drop-job-{i}",
-                "title": f"Gameplay Programmer {i}",
-                "raw_html": "<p>C++ and Unreal gameplay development.</p>",
-            }
-            for i in range(12)
-        ]
-        run1 = await reconciler.execute_sync_run(source, postings, pagination_complete=True, requests_count=1)
-        assert run1.jobs_created == 12
-        assert run1.is_reconciliation_safe is True
+    # Ingest 12 active roles initially
+    postings = [
+        {
+            "provider_posting_id": f"drop-job-{i}",
+            "title": f"Gameplay Programmer {i}",
+            "raw_html": "<p>C++ and Unreal gameplay development.</p>",
+        }
+        for i in range(12)
+    ]
+    run1 = await reconciler.execute_sync_run(source, postings, pagination_complete=True, requests_count=1)
+    assert run1.jobs_created == 12
+    assert run1.is_reconciliation_safe is True
 
-        # Next run: Source returns only 2 roles (83% drop - e.g. API truncated or endpoint glitch)
-        src = await session.get(Source, source.source_id)
-        run2 = await reconciler.execute_sync_run(src, postings[:2], pagination_complete=True, requests_count=1)
+    # Next run: Source returns only 2 roles (83% drop - e.g. API truncated or endpoint glitch)
+    src = await session.get(Source, source.source_id)
+    run2 = await reconciler.execute_sync_run(src, postings[:2], pagination_complete=True, requests_count=1)
 
-        # Reconciliation must NOT be safe!
-        assert run2.is_reconciliation_safe is False
-        assert "Suspicious volume drop" in run2.error_message
+    # Reconciliation must NOT be safe!
+    assert run2.is_reconciliation_safe is False
+    assert "Suspicious volume drop" in run2.error_message
 
-        # Verify other 10 jobs were NOT marked MISSING_CANDIDATE
-        omitted_job_stmt = select(Job).where(
-            Job.source_id == source.source_id,
-            Job.provider_posting_id == "drop-job-5",
-        )
-        job5 = (await session.execute(omitted_job_stmt)).scalar_one()
-        assert job5.lifecycle_status == LifecycleStatus.ACTIVE.value
-        assert job5.consecutive_missing_syncs == 0, "Job was incorrectly incremented despite unsafe drop!"
+    # Verify other 10 jobs were NOT marked MISSING_CANDIDATE
+    omitted_job_stmt = select(Job).where(
+        Job.source_id == source.source_id,
+        Job.provider_posting_id == "drop-job-5",
+    )
+    job5 = (await session.execute(omitted_job_stmt)).scalar_one()
+    assert job5.lifecycle_status == LifecycleStatus.ACTIVE.value
+    assert job5.consecutive_missing_syncs == 0, "Job was incorrectly incremented despite unsafe drop!"
 
 # ---------------------------------------------------------------------------
 # 6. P1-1: Honest Telemetry Semantics & Denominators
 # ---------------------------------------------------------------------------
 @pytest.mark.asyncio
-async def test_telemetry_honest_cohort_and_source_coverage():
+async def test_telemetry_honest_cohort_and_source_coverage(memory_session: AsyncSession):
     """
     Verifies that Telemetry returns:
     1. Accurate total_eligible_jobs and denominator_count.
     2. Distinct source_coverage_count.
     3. Newly observed discovery cohort count without falsely calling it a 30d market demand trend.
     """
-    async with async_session_factory() as session:
-        telemetry_engine = TelemetryEngine(session)
-        result = await telemetry_engine.get_market_telemetry(include_demo=True)
+    session = memory_session
+    telemetry_engine = TelemetryEngine(session)
+    result = await telemetry_engine.get_market_telemetry(include_demo=True)
 
-        assert "total_eligible_jobs" in result
-        assert "denominator_count" in result
-        assert result["denominator_count"] == result["total_eligible_jobs"]
-        assert "source_coverage_count" in result
-        assert "newly_observed_cohort_total" in result
-        assert "data_quality_warnings" in result
+    assert "total_eligible_jobs" in result
+    assert "denominator_count" in result
+    assert result["denominator_count"] == result["total_eligible_jobs"]
+    assert "source_coverage_count" in result
+    assert "newly_observed_cohort_total" in result
+    assert "data_quality_warnings" in result
 
-        # Check telemetry skill item structure
-        for item in result["skills_telemetry"]:
-            assert "newly_observed_cohort_count" in item
-            assert item["newly_observed_cohort_count"] >= 0
-            assert "company_breadth" in item
-            assert "skill_share_pct" in item
+    # Check telemetry skill item structure
+    for item in result["skills_telemetry"]:
+        assert "newly_observed_cohort_count" in item
+        assert item["newly_observed_cohort_count"] >= 0
+        assert "company_breadth" in item
+        assert "skill_share_pct" in item

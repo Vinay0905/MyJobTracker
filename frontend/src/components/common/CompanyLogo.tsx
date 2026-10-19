@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 
 interface CompanyLogoProps {
   company: string;
@@ -7,6 +7,40 @@ interface CompanyLogoProps {
   size?: 'sm' | 'md' | 'lg';
   className?: string;
 }
+
+const DOMAIN_MAP: Record<string, string> = {
+  rockstargames: 'rockstargames.com',
+  epicgames: 'epicgames.com',
+  nvidia: 'nvidia.com',
+  playstation: 'playstation.com',
+  ea: 'ea.com',
+  careem: 'careem.com',
+  qualcomm: 'qualcomm.com',
+  g42: 'g42.ai',
+  roblox: 'roblox.com',
+  canonical: 'canonical.com',
+  cerebras: 'cerebras.ai',
+  arista: 'arista.com',
+  weride: 'weride.ai',
+};
+
+const getLogoSlug = (name: string): string => {
+  const raw = (name || '').toLowerCase().trim();
+  if (raw.includes('rockstar')) return 'rockstargames';
+  if (raw.includes('epic')) return 'epicgames';
+  if (raw.includes('nvidia')) return 'nvidia';
+  if (raw.includes('playstation') || raw.includes('naughty dog') || raw.includes('sony')) return 'playstation';
+  if (raw.includes('electronic arts') || raw === 'ea' || raw.includes('respawn')) return 'ea';
+  if (raw.includes('careem')) return 'careem';
+  if (raw.includes('qualcomm')) return 'qualcomm';
+  if (raw.includes('g42')) return 'g42';
+  if (raw.includes('roblox')) return 'roblox';
+  if (raw.includes('canonical') || raw.includes('ubuntu')) return 'canonical';
+  if (raw.includes('cerebras')) return 'cerebras';
+  if (raw.includes('arista')) return 'arista';
+  if (raw.includes('weride')) return 'weride';
+  return raw.replace(/[^a-z0-9]/g, '');
+};
 
 export const CompanyLogo: React.FC<CompanyLogoProps> = ({
   company,
@@ -17,21 +51,21 @@ export const CompanyLogo: React.FC<CompanyLogoProps> = ({
 }) => {
   const [sourceIndex, setSourceIndex] = useState<number>(0);
 
-  // Normalize company slug for local curated static SVGs
-  const companySlug = company
-    .toLowerCase()
-    .replace(/[^a-z0-9]/g, '');
+  useEffect(() => {
+    setSourceIndex(0);
+  }, [company, domain]);
 
-  const cleanDomain = domain || `${companySlug}.com`;
+  const companySlug = getLogoSlug(company);
+  const cleanDomain = domain || DOMAIN_MAP[companySlug] || `${companySlug}.com`;
 
   // Cascading sources:
   // 1. Local Curated Vector Asset (/logos/{slug}.svg)
-  // 2. Clearbit Logo API
-  // 3. Google S2 Favicon API (retina 128px)
+  // 2. Google S2 Favicon API (retina 128px)
+  // 3. Clearbit Logo API
   const sources = [
     `/logos/${companySlug}.svg`,
-    `https://logo.clearbit.com/${cleanDomain}`,
     `https://www.google.com/s2/favicons?domain=${cleanDomain}&sz=128`,
+    `https://logo.clearbit.com/${cleanDomain}`,
   ];
 
   const sizeClasses = {

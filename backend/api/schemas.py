@@ -153,3 +153,22 @@ class SyncRunSchema(BaseModel):
     jobs_rejected: int
     is_reconciliation_safe: bool
     error_message: Optional[str] = None
+
+class CompanyItemSchema(BaseModel):
+    company_id: str
+    name: str
+    canonical_category: str
+    website_url: Optional[str] = None
+    active_jobs_count: int
+
+class SyncStatusSchema(BaseModel):
+    is_active: bool
+    current_run_id: Optional[str] = None
+    status: str
+    current_source: Optional[str] = None
+    total_sources: int
+    completed_sources: int
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    last_error: Optional[str] = None
+    summary: Dict[str, Any] = {}

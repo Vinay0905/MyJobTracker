@@ -84,7 +84,7 @@ class TelemetryEngine:
                     skill_newly_observed_cohort[skill_id].add(job.job_id)
 
         # 4. Check historical snapshot baseline (Window B: 30-60 days ago) for genuine market trend
-        from backend.db.models import JobSnapshot
+        from backend.db.models import JobSnapshot, JobSkillEvidence
         prior_snapshots_stmt = select(JobSnapshot).where(
             JobSnapshot.observed_at >= sixty_days_ago,
             JobSnapshot.observed_at < thirty_days_ago,
@@ -92,7 +92,21 @@ class TelemetryEngine:
         prior_snapshots = (await self.session.execute(prior_snapshots_stmt)).scalars().all()
         has_prior_baseline = len(prior_snapshots) >= 10
 
-        if not has_prior_baseline:
+        prior_skill_shares: Dict[str, float] = {}
+        if has_prior_baseline:
+            prior_snapshot_ids = [s.snapshot_id for s in prior_snapshots]
+            prior_jobs_count = len({s.job_id for s in prior_snapshots})
+            if prior_jobs_count > 0:
+                prior_evidence_stmt = select(JobSkillEvidence.skill_id, JobSkillEvidence.job_id).where(
+                    JobSkillEvidence.snapshot_id.in_(prior_snapshot_ids)
+                )
+                prior_evidence = (await self.session.execute(prior_evidence_stmt)).all()
+                prior_skill_jobs = defaultdict(set)
+                for s_id, j_id in prior_evidence:
+                    prior_skill_jobs[s_id].add(j_id)
+                for s_id, j_ids in prior_skill_jobs.items():
+                    prior_skill_shares[s_id] = (len(j_ids) / prior_jobs_count) * 100.0
+        else:
             data_quality_warnings.append(
                 "Historical 30-day market demand shift requires complete snapshots across prior 30d window (>=60d total history). Exposing newly observed discovery cohort instead."
             )
@@ -112,8 +126,10 @@ class TelemetryEngine:
             # Period delta is only computed if genuine historical snapshots exist in prior window
             period_delta = None
             if has_prior_baseline:
-                # Normalization by period denominators
-                pass
+                if skill_id in prior_skill_shares:
+                    period_delta = round(skill_share - prior_skill_shares[skill_id], 1)
+                else:
+                    period_delta = round(skill_share, 1)
 
             telemetry_records.append({
                 "skill_id": skill_id,

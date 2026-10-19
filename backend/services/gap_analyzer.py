@@ -95,11 +95,19 @@ class GapAnalyzerService:
             earned_points = (len(satisfied_required) * req_weight) + (len(satisfied_preferred) * pref_weight)
             coverage_score = round((earned_points / total_points * 100), 1) if total_points > 0 else 100.0
 
-            # Experience gap evaluation
+            # Experience gap evaluation (differentiating overall vs role vs skill scopes)
             job_min_yoe = None
-            yoe_reqs = [r for r in active_experience if r.min_years is not None]
-            if yoe_reqs:
-                job_min_yoe = min(r.min_years for r in yoe_reqs)
+            governing_req = None
+            overall_reqs = [r for r in active_experience if r.experience_scope in ("overall_professional", "role_specific") and r.min_years is not None]
+            if overall_reqs:
+                # General role experience is governed by the highest primary scope requirement (never minimized by incidental skill mentions)
+                governing_req = max(overall_reqs, key=lambda r: r.min_years)
+                job_min_yoe = governing_req.min_years
+            else:
+                other_reqs = [r for r in active_experience if r.min_years is not None]
+                if other_reqs:
+                    governing_req = max(other_reqs, key=lambda r: r.min_years)
+                    job_min_yoe = governing_req.min_years
 
             has_experience_gap = False
             yoe_deficit = None
@@ -111,7 +119,8 @@ class GapAnalyzerService:
             elif job_min_yoe is not None and candidate_yoe < job_min_yoe:
                 has_experience_gap = True
                 yoe_deficit = round(job_min_yoe - candidate_yoe, 1)
-                yoe_gap_warning = f"Candidate has {candidate_yoe} YOE, but role specifies a minimum of {job_min_yoe} YOE."
+                req_scope_label = governing_req.experience_scope.replace("_", " ").title() if governing_req else "General"
+                yoe_gap_warning = f"Candidate has {candidate_yoe} YOE, but role specifies a minimum of {job_min_yoe} YOE ({req_scope_label})."
 
             # Strict 1-Skill Away logic: missing exactly 1 required, or 0 required and 1 preferred
             is_one_skill_away = (len(missing_required) == 1) or (len(missing_required) == 0 and len(missing_preferred) == 1)

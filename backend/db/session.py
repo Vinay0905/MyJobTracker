@@ -1,10 +1,11 @@
+import os
 import json
 from typing import AsyncGenerator
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from backend.db.models import Base, Company, Source, TaxonomySkill, CandidateProfile
 
-DATABASE_URL = "sqlite+aiosqlite:///./devradar.db"
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./devradar.db")
 
 engine = create_async_engine(
     DATABASE_URL,
@@ -90,7 +91,7 @@ DEFAULT_COMPANIES = [
             "base_url": "https://boards-api.greenhouse.io",
             "board_token": "ea",
             "allowed_hosts": json.dumps(["boards-api.greenhouse.io", "boards.greenhouse.io", "ea.com", "jobs.ea.com"]),
-            "enabled": True,
+            "enabled": False,  # Verified: Greenhouse token 'ea' returns 404. Flagged unsupported until custom ATS integrated.
             "polling_interval_minutes": 60,
             "timeout_seconds": 15.0,
             "concurrency_limit": 3,
@@ -132,14 +133,14 @@ DEFAULT_COMPANIES = [
     },
     {
         "company_id": "playstation",
-        "name": "Sony PlayStation Studios",
+        "name": "PlayStation Studios (Naughty Dog)",
         "canonical_category": "Game Studio",
-        "website_url": "https://www.playstation.com",
+        "website_url": "https://www.naughtydog.com",
         "source": {
             "source_id": "playstation_greenhouse",
             "provider_type": "greenhouse",
             "base_url": "https://boards-api.greenhouse.io",
-            "board_token": "playstationglobal",
+            "board_token": "naughtydog",
             "allowed_hosts": json.dumps(["boards-api.greenhouse.io", "boards.greenhouse.io"]),
             "enabled": True,
             "polling_interval_minutes": 60,
@@ -406,7 +407,7 @@ async def init_db(custom_engine=None):
             if not existing:
                 session.add(TaxonomySkill(skill_id=skill_id, skill_name=skill_name, category=category))
 
-        # 2. Seed Companies & Sources
+        # 2. Seed and Synchronize Companies & Sources
         for item in DEFAULT_COMPANIES:
             existing_company = await session.get(Company, item["company_id"])
             if not existing_company:
@@ -418,6 +419,12 @@ async def init_db(custom_engine=None):
                 )
                 session.add(comp)
                 await session.flush()
+            else:
+                # Update configuration-managed fields
+                existing_company.name = item["name"]
+                existing_company.canonical_category = item["canonical_category"]
+                if item.get("website_url"):
+                    existing_company.website_url = item.get("website_url")
 
             source_cfg = item["source"]
             existing_source = await session.get(Source, source_cfg["source_id"])
@@ -436,6 +443,18 @@ async def init_db(custom_engine=None):
                     concurrency_limit=source_cfg.get("concurrency_limit", 2),
                 )
                 session.add(src)
+            else:
+                # Synchronize configuration-managed fields while preserving runtime telemetry
+                existing_source.provider_type = source_cfg["provider_type"]
+                existing_source.base_url = source_cfg["base_url"]
+                existing_source.board_token = source_cfg.get("board_token")
+                existing_source.endpoint = source_cfg.get("endpoint")
+                existing_source.allowed_hosts = source_cfg.get("allowed_hosts", "[]")
+                existing_source.enabled = source_cfg.get("enabled", True)
+                existing_source.polling_interval_minutes = source_cfg.get("polling_interval_minutes", 60)
+                existing_source.timeout_seconds = source_cfg.get("timeout_seconds", 15.0)
+                existing_source.concurrency_limit = source_cfg.get("concurrency_limit", 2)
+                # Note: health_status, last_successful_sync, last_attempted_sync, last_error are preserved!
 
         # 3. Seed Candidate Profile
         existing_candidate = await session.get(CandidateProfile, "default")

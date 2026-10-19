@@ -221,6 +221,63 @@ DEMO_JOBS = [
             ("python", "required", "Python AI orchestration tooling."),
         ],
         "description": "G42 is scaling supercomputing infrastructure for foundational LLM training in Abu Dhabi. Requires 6+ years in distributed training, CUDA, and high-performance computing."
+    },
+    {
+        "posting_id": "demo-ea-01",
+        "source_id": "ea_greenhouse",
+        "requisition_id": "EA-REQ-901",
+        "internal_job_id": "INT-EA-01",
+        "title": "Senior Frostbite Engine Programmer",
+        "canonical_category": "Game Studio",
+        "department": "Frostbite Core Tech",
+        "location": "Stockholm, Sweden / Vancouver, BC",
+        "work_arrangement": "hybrid",
+        "apply_url": "https://www.ea.com/careers/demo/frostbite-engine",
+        "min_yoe": 5,
+        "skills": [
+            ("cpp", "required", "Expert C++ programming and cache-conscious multi-core game engine architecture."),
+            ("directx", "required", "DirectX 12 / D3D12 and Vulkan modern low-level graphics pipeline."),
+            ("shaders", "preferred", "HLSL compute shaders and real-time raytracing optimization."),
+        ],
+        "description": "Join EA's Frostbite engine team to engineer low-level rendering and runtime systems powering EA SPORTS, Battlefield, and Need for Speed. Requires 5+ years in AAA game engine architecture and modern C++."
+    },
+    {
+        "posting_id": "demo-ea-02",
+        "source_id": "ea_greenhouse",
+        "requisition_id": "EA-REQ-902",
+        "internal_job_id": "INT-EA-02",
+        "title": "Gameplay Systems & Physics Engineer",
+        "canonical_category": "Game Studio",
+        "department": "Respawn Entertainment",
+        "location": "Los Angeles, CA",
+        "work_arrangement": "onsite",
+        "apply_url": "https://www.ea.com/careers/demo/gameplay-physics",
+        "min_yoe": 4,
+        "skills": [
+            ("cpp", "required", "Strong C++ gameplay systems architecture and deterministic networking."),
+            ("physics_engine", "required", "Rigid body dynamics, character controllers, and vehicle physics simulation."),
+            ("python", "preferred", "Python tools for rapid gameplay prototyping and telemetry."),
+        ],
+        "description": "Respawn Entertainment / EA is seeking a Gameplay Systems and Physics Engineer to architect next-generation player movement mechanics and physics solvers. Requires 4+ years in C++ gameplay and physics development."
+    },
+    {
+        "posting_id": "demo-ps-01",
+        "source_id": "playstation_greenhouse",
+        "requisition_id": "ND-REQ-601",
+        "internal_job_id": "INT-ND-01",
+        "title": "Lead Gameplay & Systems Programmer",
+        "canonical_category": "Game Studio",
+        "department": "Gameplay Core",
+        "location": "Santa Monica, CA",
+        "work_arrangement": "onsite",
+        "apply_url": "https://www.naughtydog.com/careers/demo/gameplay-programmer",
+        "min_yoe": 5,
+        "skills": [
+            ("cpp", "required", "Deep modern C++ systems programming and memory optimization for PlayStation 5 hardware."),
+            ("npc_ai", "required", "Combat AI, behavior trees, and procedural animation state machines."),
+            ("simd", "preferred", "SIMD vector math optimization and cache-conscious data-oriented design."),
+        ],
+        "description": "Naughty Dog is looking for a Lead Gameplay & Systems Programmer to architect core gameplay and AI systems for our next franchise. Requires 5+ years C++ game development."
     }
 ]
 

@@ -8,6 +8,7 @@ import {
   SyncRunItem,
   CandidateProfile,
   GapAnalysisResponse,
+  CompanyItem,
   ViewTab,
 } from './types/api';
 import {
@@ -20,6 +21,8 @@ import {
   triggerSync,
   fetchCandidateProfile,
   fetchGapAnalysis,
+  fetchCompanies,
+  fetchSyncStatus,
 } from './api/client';
 import { TopNavbar } from './components/layout/TopNavbar';
 import { Sidebar } from './components/layout/Sidebar';
@@ -59,6 +62,10 @@ export const App: React.FC = () => {
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [lastSyncedMessage, setLastSyncedMessage] = useState<string>('Live Ingestion');
 
+  const [companies, setCompanies] = useState<CompanyItem[]>([]);
+  const [selectedCompany, setSelectedCompany] = useState<string | null>(null);
+  const [selectedSort, setSelectedSort] = useState<string>('newest_discovered');
+
   const [filter0to6Yoe, setFilter0to6Yoe] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
@@ -70,9 +77,11 @@ export const App: React.FC = () => {
   const loadRadarData = useCallback(async () => {
     setIsLoading(true);
     try {
-      const [jobsData, skillsData] = await Promise.all([
+      const [jobsData, skillsData, companiesData] = await Promise.all([
         fetchJobs({
           category: selectedCategory,
+          company: selectedCompany,
+          sort_by: selectedSort,
           location: selectedLocation,
           role_focus: selectedRoleFocus.length > 0 ? selectedRoleFocus : null,
           skill: selectedSkill,
@@ -81,6 +90,7 @@ export const App: React.FC = () => {
           max_required_yoe: filter0to6Yoe ? 6 : null,
         }),
         fetchTopSkills(selectedCategory, includeDemo),
+        fetchCompanies(includeDemo),
       ]);
 
       setJobs(jobsData.jobs);
@@ -89,12 +99,13 @@ export const App: React.FC = () => {
         setSectorCounts(jobsData.sector_counts);
       }
       setTopSkills(skillsData.top_skills);
+      setCompanies(companiesData);
     } catch (e) {
       console.warn('Backend loading warning:', e);
     } finally {
       setIsLoading(false);
     }
-  }, [selectedCategory, selectedLocation, selectedRoleFocus, selectedSkill, searchQuery, includeDemo, filter0to6Yoe]);
+  }, [selectedCategory, selectedCompany, selectedSort, selectedLocation, selectedRoleFocus, selectedSkill, searchQuery, includeDemo, filter0to6Yoe]);
 
   // Load telemetry
   const loadTelemetryData = useCallback(async () => {
@@ -151,27 +162,41 @@ export const App: React.FC = () => {
     else if (currentTab === 'sources') loadSourcesData();
   }, [currentTab, loadRadarData, loadTelemetryData, loadGapData, loadSourcesData]);
 
-  // Trigger sync across all career portals
+  // Trigger sync across all career portals with honest status polling
   const handleSync = async () => {
     setIsSyncing(true);
-    setLastSyncedMessage('Ingesting...');
+    setLastSyncedMessage('Initiating sync...');
     try {
       await triggerSync();
-      // Actively poll every 1.5s until jobs populate
-      let attempts = 0;
-      const interval = setInterval(async () => {
-        attempts += 1;
-        if (currentTab === 'radar') await loadRadarData();
-        else if (currentTab === 'sources') await loadSourcesData();
-        else if (currentTab === 'telemetry') await loadTelemetryData();
-
-        if (attempts >= 6) {
-          clearInterval(interval);
-          setIsSyncing(false);
-          setLastSyncedMessage('Just now');
-          playSyncChime();
+      const pollInterval = setInterval(async () => {
+        try {
+          const status = await fetchSyncStatus();
+          if (status.is_active || status.status === 'queued' || status.status === 'running') {
+            const currentSource = status.current_source ? ` (${status.current_source})` : '';
+            const progress = status.total_sources > 0 ? ` [${status.completed_sources}/${status.total_sources}]` : '';
+            setLastSyncedMessage(`Ingesting${currentSource}${progress}...`);
+          } else {
+            clearInterval(pollInterval);
+            setIsSyncing(false);
+            if (status.status === 'completed') {
+              setLastSyncedMessage('Sync Complete');
+              playSyncChime();
+            } else if (status.status === 'partial') {
+              setLastSyncedMessage('Sync Completed (warnings)');
+              playSyncChime();
+            } else if (status.status === 'failed') {
+              setLastSyncedMessage(`Sync Failed: ${status.last_error || 'Network error'}`);
+            } else {
+              setLastSyncedMessage('Idle');
+            }
+            if (currentTab === 'radar') await loadRadarData();
+            else if (currentTab === 'sources') await loadSourcesData();
+            else if (currentTab === 'telemetry') await loadTelemetryData();
+          }
+        } catch (pollErr) {
+          console.warn('Sync status poll error:', pollErr);
         }
-      }, 1500);
+      }, 1000);
     } catch (err) {
       console.error('Sync failed:', err);
       setLastSyncedMessage('Sync Failed');
@@ -325,6 +350,9 @@ export const App: React.FC = () => {
           onSelectLocation={setSelectedLocation}
           totalRolesCount={totalJobsCount}
           sectorCounts={sectorCounts}
+          companies={companies}
+          selectedCompany={selectedCompany}
+          onSelectCompany={setSelectedCompany}
         />
 
         {/* Dynamic View Canvas */}
@@ -368,34 +396,65 @@ export const App: React.FC = () => {
                 </div>
               </section>
 
-              {/* Quick Eligibility Controls & Filter Header */}
-              <div className="flex flex-wrap items-center justify-between gap-2 px-1">
-                <button
-                  onClick={() => setFilter0to6Yoe((prev) => !prev)}
-                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-mono transition-all ${
-                    filter0to6Yoe
-                      ? 'bg-secondary/20 border-secondary text-secondary font-semibold shadow-sm shadow-secondary/10'
-                      : 'bg-surface-container-low border-outline-variant text-on-surface-variant hover:text-on-surface hover:border-outline'
-                  }`}
-                >
-                  <span className="material-symbols-outlined text-sm">
-                    {filter0to6Yoe ? 'check_circle' : 'radio_button_unchecked'}
+              {/* Quick Eligibility Controls & Sort Options */}
+              <div className="flex flex-wrap items-center justify-between gap-3 px-1">
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => setFilter0to6Yoe((prev) => !prev)}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-mono transition-all ${
+                      filter0to6Yoe
+                        ? 'bg-secondary/20 border-secondary text-secondary font-semibold shadow-sm shadow-secondary/10'
+                        : 'bg-surface-container-low border-outline-variant text-on-surface-variant hover:text-on-surface hover:border-outline'
+                    }`}
+                  >
+                    <span className="material-symbols-outlined text-sm">
+                      {filter0to6Yoe ? 'check_circle' : 'radio_button_unchecked'}
+                    </span>
+                    <span>0–6 YOE Eligible (Exclude 7+ YOE Staff/Principal)</span>
+                  </button>
+                  <span className="text-[11px] font-mono text-outline hidden sm:inline">
+                    {filter0to6Yoe ? 'Filtering: ≤6 YOE' : 'All seniorities'}
                   </span>
-                  <span>0–6 YOE Eligible (Exclude 7+ YOE Staff/Principal)</span>
-                </button>
-                <span className="text-[11px] font-mono text-outline">
-                  {filter0to6Yoe ? 'Filtering: ≤6 YOE or unspecified' : 'Showing all seniority levels'}
-                </span>
+                </div>
+
+                {/* Sort By Select */}
+                <div className="flex items-center gap-2 font-mono text-xs">
+                  <label htmlFor="job-sort-select" className="text-outline text-[11px] uppercase tracking-wider font-semibold">Sort By:</label>
+                  <select
+                    id="job-sort-select"
+                    value={selectedSort}
+                    onChange={(e) => {
+                      playKeyClick();
+                      setSelectedSort(e.target.value);
+                    }}
+                    className="bg-surface-container-low border border-outline-variant rounded-lg px-2.5 py-1.5 text-xs text-on-surface focus:outline-none focus:border-primary cursor-pointer font-mono"
+                  >
+                    <option value="newest_discovered">Newest Discovered</option>
+                    <option value="recently_posted">Recently Posted</option>
+                    <option value="company_asc">Company (A → Z)</option>
+                    <option value="company_desc">Company (Z → A)</option>
+                    <option value="title_asc">Job Title (A → Z)</option>
+                    <option value="title_desc">Job Title (Z → A)</option>
+                    <option value="location_asc">Location (A → Z)</option>
+                    <option value="recently_updated">Recently Updated</option>
+                  </select>
+                </div>
               </div>
 
               {/* Active Filter Chips */}
-              {(selectedCategory || selectedLocation || selectedRoleFocus.length > 0 || selectedSkill || searchQuery || filter0to6Yoe) && (
+              {(selectedCategory || selectedCompany || selectedLocation || selectedRoleFocus.length > 0 || selectedSkill || searchQuery || filter0to6Yoe) && (
                 <div className="flex flex-wrap items-center gap-2 p-2 rounded-lg bg-surface-container border border-outline-variant font-mono text-xs">
                   <span className="text-outline">Active Filters:</span>
                   {filter0to6Yoe && (
                     <span className="px-2 py-0.5 rounded bg-secondary/20 text-secondary flex items-center gap-1">
                       <span>Exp: ≤6 YOE</span>
                       <button onClick={() => setFilter0to6Yoe(false)} className="hover:text-white ml-0.5 font-bold">×</button>
+                    </span>
+                  )}
+                  {selectedCompany && (
+                    <span className="px-2 py-0.5 rounded bg-primary/20 text-primary flex items-center gap-1">
+                      <span>Company: {selectedCompany}</span>
+                      <button onClick={() => setSelectedCompany(null)} className="hover:text-white ml-0.5 font-bold">×</button>
                     </span>
                   )}
                   {selectedCategory && (
@@ -431,6 +490,7 @@ export const App: React.FC = () => {
                   <button
                     onClick={() => {
                       setSelectedCategory(null);
+                      setSelectedCompany(null);
                       setSelectedLocation(null);
                       setSelectedRoleFocus([]);
                       setSelectedSkill(null);

@@ -100,6 +100,27 @@ export interface TopSkillsResponse {
   top_skills: TopSkillItem[];
 }
 
+export interface CompanyItem {
+  company_id: string;
+  name: string;
+  canonical_category: string;
+  website_url?: string | null;
+  active_jobs_count: number;
+}
+
+export interface SyncStatus {
+  is_active: boolean;
+  current_run_id?: string | null;
+  status: 'idle' | 'queued' | 'running' | 'completed' | 'partial' | 'failed' | string;
+  current_source?: string | null;
+  total_sources: number;
+  completed_sources: number;
+  started_at?: string | null;
+  completed_at?: string | null;
+  last_error?: string | null;
+  summary: Record<string, any>;
+}
+
 export interface SourceItem {
   source_id: string;
   company_id: string;

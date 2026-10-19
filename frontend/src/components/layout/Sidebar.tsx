@@ -1,4 +1,6 @@
 import React from 'react';
+import { CompanyItem } from '../../types/api';
+import { CompanyLogo } from '../common/CompanyLogo';
 
 interface SidebarProps {
   selectedCategory: string | null;
@@ -9,6 +11,9 @@ interface SidebarProps {
   onSelectLocation: (loc: string | null) => void;
   totalRolesCount: number;
   sectorCounts?: Record<string, number>;
+  companies?: CompanyItem[];
+  selectedCompany?: string | null;
+  onSelectCompany?: (comp: string | null) => void;
 }
 
 const SECTORS = [
@@ -45,6 +50,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onSelectLocation,
   totalRolesCount,
   sectorCounts,
+  companies = [],
+  selectedCompany = null,
+  onSelectCompany,
 }) => {
   return (
     <aside className="flex flex-col justify-between h-[calc(100vh-57px)] w-64 border-r border-outline-variant p-space-md bg-surface-container-lowest shrink-0 overflow-y-auto">
@@ -108,6 +116,65 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 </button>
               );
             })}
+          </div>
+        </div>
+
+        {/* Company Group */}
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center justify-between">
+            <label className="font-mono text-[10px] text-outline tracking-wider font-semibold uppercase">
+              Target Companies
+            </label>
+            {selectedCompany && (
+              <button
+                onClick={() => onSelectCompany?.(null)}
+                className="font-mono text-[10px] text-outline hover:text-primary transition-colors"
+              >
+                Reset
+              </button>
+            )}
+          </div>
+          <div className="flex flex-col gap-1 max-h-52 overflow-y-auto pr-1">
+            {companies && companies.length > 0 ? (
+              companies.map((comp) => {
+                const isSelected =
+                  selectedCompany?.toLowerCase() === comp.name.toLowerCase() ||
+                  selectedCompany?.toLowerCase() === comp.company_id.toLowerCase();
+                return (
+                  <button
+                    key={comp.company_id}
+                    onClick={() => onSelectCompany?.(isSelected ? null : comp.name)}
+                    className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg font-mono text-xs text-left transition-colors ${
+                      isSelected
+                        ? 'bg-surface-container border border-primary/40 text-primary font-medium'
+                        : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 truncate pr-1">
+                      <CompanyLogo
+                        company={comp.name}
+                        domain={comp.website_url}
+                        category={comp.canonical_category}
+                        size="sm"
+                        className="w-4 h-4 !rounded text-[8px] shrink-0"
+                      />
+                      <span className="truncate">{comp.name}</span>
+                    </div>
+                    <span
+                      className={`font-mono text-[10px] px-1.5 py-0.5 rounded ${
+                        isSelected
+                          ? 'bg-primary/20 text-primary font-semibold'
+                          : 'bg-surface-container-high text-outline'
+                      }`}
+                    >
+                      {comp.active_jobs_count}
+                    </span>
+                  </button>
+                );
+              })
+            ) : (
+              <span className="font-mono text-[11px] text-outline italic px-2 py-1">Loading companies...</span>
+            )}
           </div>
         </div>
 

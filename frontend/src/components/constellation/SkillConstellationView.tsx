@@ -401,6 +401,19 @@ export const SkillConstellationView: React.FC<SkillConstellationViewProps> = ({
         </div>
       </div>
 
+      {/* Illustrative Curriculum Disclosure */}
+      <div className="bg-primary/10 border border-primary/30 rounded-xl px-4 py-2.5 flex items-center justify-between gap-3 text-primary font-mono text-xs">
+        <div className="flex items-center gap-2">
+          <span className="material-symbols-outlined text-base shrink-0">account_tree</span>
+          <span>
+            <strong>Curriculum & Foundational Dependency Graph (Illustrative):</strong> Skill relationships, prerequisite paths, and mastery tiers model engineering curriculum standards and technical roadmap best practices.
+          </span>
+        </div>
+        <span className="px-2 py-0.5 rounded bg-primary/20 text-on-surface font-semibold text-[10px] shrink-0 uppercase tracking-wider">
+          Illustrative Graph
+        </span>
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-space-md">
         {/* Constellation Canvas Viewport */}
         <div className="lg:col-span-3 rounded-2xl bg-[#080B10] border border-outline-variant/80 p-4 relative overflow-hidden flex flex-col min-h-[580px] shadow-2xl">

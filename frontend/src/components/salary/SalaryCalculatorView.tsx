@@ -94,6 +94,14 @@ export const SalaryCalculatorView: React.FC = () => {
         </div>
       </div>
 
+      {/* Illustrative Disclosure Banner */}
+      <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl px-4 py-2.5 flex items-center gap-3 text-amber-300 font-mono text-xs">
+        <span className="material-symbols-outlined text-base text-amber-400 shrink-0">info</span>
+        <span>
+          <strong>Illustrative Scenario Calculator:</strong> Figures reflect hypothetical modeling, candidate assumptions, and public market benchmarks; not verified employer compensation offers or binding guarantees.
+        </span>
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-space-lg">
         {/* Module 1: Tech Stack Scarcity Multiplier */}
         <section className="p-space-lg rounded-2xl bg-surface-container-low border border-outline-variant flex flex-col gap-space-md">

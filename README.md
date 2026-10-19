@@ -32,21 +32,35 @@ Autonomous engineering career radar and market telemetry engine
 
 ---
 
+## Canonical Codebase vs Legacy Stubs
+
+> [!IMPORTANT]
+> The active, production-grade application resides exclusively in:
+> - **`backend/`** (FastAPI backend, connectors, database models, extraction engine, telemetry)
+> - **`frontend/`** (Vite + React 18 + TypeScript + Tailwind CSS dark terminal dashboard)
+> 
+> Legacy directories (`devradar-ui/` and `job-radar-api/`) are deprecated stubs retained solely for historical migration reference. All active development, scripts, and tests target `backend/` and `frontend/`.
+
+---
+
 ## Directory Structure
 
 ```text
+├── .github/workflows/
+│   └── ci.yml                 # Automated CI running backend pytest & frontend Vite build
 ├── backend/
 │   ├── api/
-│   │   ├── routes.py          # FastAPI REST endpoints
+│   │   ├── routes.py          # FastAPI REST endpoints (/api/jobs, /api/companies, /api/sync/status, etc.)
 │   │   └── schemas.py         # Pydantic request/response models
 │   ├── connectors/
 │   │   ├── base.py            # Resilient HTTP client (retries, jitter, SSRF guard)
-│   │   ├── greenhouse.py      # Greenhouse JSON board connector
-│   │   ├── workday.py         # Workday CXS career portal connector
+│   │   ├── greenhouse.py      # Greenhouse JSON board connector (Rockstar Games, Epic Games, Naughty Dog, etc.)
+│   │   ├── workday.py         # Workday CXS career portal connector (NVIDIA, etc.)
+│   │   ├── ashby.py           # Ashby API connector (Cerebras, etc.)
 │   │   └── manager.py         # ATS routing manager
 │   ├── db/
 │   │   ├── models.py          # Normalized SQLAlchemy 2.0 async models
-│   │   └── session.py         # Async session factory & seed data
+│   │   └── session.py         # Async session factory, DATABASE_URL env config & authoritative seed data
 │   ├── extraction/
 │   │   ├── normalizer.py      # HTML tag cleaner & section segmenter
 │   │   ├── filter.py          # Strict engineering role filter
@@ -54,33 +68,37 @@ Autonomous engineering career radar and market telemetry engine
 │   │   ├── experience.py      # Multi-scope experience requirements parser
 │   │   └── pipeline.py        # Unified extraction facade
 │   ├── services/
-│   │   ├── reconciler.py      # Safe reconciliation & state machine
+│   │   ├── reconciler.py      # Safe reconciliation & state machine (2-run grace period)
 │   │   ├── telemetry.py       # Market skill share % & trend engine
 │   │   └── gap_analyzer.py    # 1-Skill Away candidate gap analyzer
 │   ├── main.py                # FastAPI application entry point
 │   └── requirements.txt       # Python dependencies
 ├── frontend/
 │   ├── src/
-│   │   ├── api/client.ts      # Typed async client
+│   │   ├── api/client.ts      # Typed async client with sorting & company support
 │   │   ├── types/api.ts       # TypeScript interfaces
 │   │   ├── components/
-│   │   │   ├── layout/        # TopNavbar & Sidebar
-│   │   │   ├── jobs/          # JobCard & JobDetailDrawer
+│   │   │   ├── layout/        # TopNavbar & Sidebar (Target Companies filter & sectors)
+│   │   │   ├── jobs/          # JobCard (multi-tier logo pipeline) & JobDetailDrawer
+│   │   │   ├── constellation/ # Interactive Deep-Tech Skill Dependency Constellation Graph
+│   │   │   ├── salary/        # Tech Stack Scarcity Multiplier & UAE Tax-Free Calculator
 │   │   │   ├── telemetry/     # SkillTelemetryView
 │   │   │   ├── candidate/     # GapAnalyzerView
 │   │   │   └── sources/       # SourceHealthView
-│   │   └── App.tsx            # Central state & tab controller
+│   │   ├── utils/audio.ts     # Cyberpunk Web Audio sound synthesizer
+│   │   └── App.tsx            # Central state, live polling & keyboard shortcuts
 │   ├── package.json
+│   ├── tailwind.config.js     # Color Hunt Palette (#790D16, #E5D3AF, #F5EFE1, #AEC4D4)
 │   └── vite.config.ts         # Vite dev proxy to :8000
 ├── tests/
 │   ├── fixtures/              # Adversarial test cases
-│   ├── test_api.py            # API route integration tests
+│   ├── test_api.py            # API route integration tests (companies, sync status, 8 sort orders)
+│   ├── test_data_trust.py     # Anti-fabrication, zero-hallucination regression tests
 │   ├── test_db_models.py      # Relational schema tests
 │   ├── test_extraction.py     # Skill & experience extractor tests
-│   └── test_reconciliation.py  # Safe closure state machine tests
+│   ├── test_hardening.py      # Snapshot isolation & reconciliation tests
+│   └── test_reconciliation.py # Safe closure state machine tests
 ├── ARCHITECTURE.md            # System architecture & formulation
-├── IMPLEMENTATION_PLAN.md     # Milestones checklist
-├── KNOWN_LIMITATIONS.md       # Known provider constraints
 └── .env.example               # Environment template
 ```
 

@@ -7,6 +7,8 @@ import {
   SyncRunItem,
   CandidateProfile,
   GapAnalysisResponse,
+  CompanyItem,
+  SyncStatus,
 } from '../types/api';
 
 const API_BASE = '/api';
@@ -15,6 +17,7 @@ export async function fetchJobs(
   filters: {
     category?: string | null;
     company?: string | null;
+    sort_by?: string | null;
     location?: string | null;
     role_focus?: string | string[] | null;
     skill?: string | null;
@@ -31,6 +34,7 @@ export async function fetchJobs(
   const params = new URLSearchParams();
   if (filters.category) params.set('category', filters.category);
   if (filters.company) params.set('company', filters.company);
+  if (filters.sort_by) params.set('sort_by', filters.sort_by);
   if (filters.location && filters.location !== 'Global') params.set('location', filters.location);
   if (filters.role_focus) {
     const roles = Array.isArray(filters.role_focus) ? filters.role_focus.join(',') : filters.role_focus;
@@ -139,3 +143,22 @@ export async function fetchGapAnalysis(targetCategory?: string | null, include_d
   }
   return res.json();
 }
+
+export async function fetchCompanies(include_demo: boolean = false, signal?: AbortSignal): Promise<CompanyItem[]> {
+  const params = new URLSearchParams();
+  if (include_demo) params.set('include_demo', 'true');
+  const res = await fetch(`${API_BASE}/companies?${params.toString()}`, { signal });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch companies: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchSyncStatus(signal?: AbortSignal): Promise<SyncStatus> {
+  const res = await fetch(`${API_BASE}/sync/status`, { signal });
+  if (!res.ok) {
+    throw new Error(`Failed to fetch sync status: ${res.statusText}`);
+  }
+  return res.json();
+}
+

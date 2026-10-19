@@ -200,10 +200,20 @@ HTML descriptions are stripped of `<script>`, `<style>`, and tracking tags, pres
 ## 6. Frontend Command Center Architecture (`frontend/`)
 
 Built on **Vite + React 18 + TypeScript + Tailwind CSS**:
-- **Design Alignment**: Implements all color tokens from `design/DESIGN.md` (`#0f131c` void, `#181c24` low-surface, `#4edea3` secondary emerald, `#d0bcff` tertiary lavender, `#adc6ff` primary).
-- **Navigation Tabs**:
-  1. **Job Radar (Stream)**: Responsive 2-column live job cards, filter sidebar, sector selectors, YOE pills, direct career page links.
-  2. **Job Detail Drawer**: Slide-over drawer with verbatim `evidence_text` quotes for each skill, experience requirement breakdown, and changelog.
-  3. **Skill Telemetry**: Ranked skills, 30d trend lines, company breadth, degraded source warnings.
-  4. **My Skill Profile ("1-Skill Away")**: Candidate skill editor and high-leverage job recommendations.
-  5. **Source Health & Sync History**: Real-time status of each ATS provider, latency, error logs, and last sync timestamp.
+- **Design Alignment**: Implements the user-specified Color Hunt Palette (`#790D16` Deep Burgundy, `#E5D3AF` Warm Champagne Sand, `#F5EFE1` Parchment Paper, `#AEC4D4` Slate Blue) layered over an obsidian dark wine terminal base (`#131013`, `#1c161b`, `#261e25`).
+- **Interactive Visual Modules**:
+  1. **Job Radar (Stream)**: Responsive live job cards with 3-tier zero-failure logo fallbacks (Clearbit -> Google S2 128px Favicons -> Deterministic gradient monogram badge), searchable target company filtering, 8 deterministic backend sort orders, 0-6 YOE quick filter, direct career page links, and verbatim evidence inspection drawer.
+  2. **Skill Constellation**: Interactive 2D dependency graph of deep-tech systems (Silicon & AI, Game Engine, Edge & Embedded, Cloud & RDMA) with prerequisite paths, downstream impact, and illustrative disclosures.
+  3. **Reverse Salary Calculator**: Interactive sandbox modeling tech stack scarcity premiums (CUDA, Triton, RDMA, etc.) and UAE tax-free relocation net compensation equivalence with illustrative modeling disclosures.
+  4. **Skill Telemetry**: Ranked skills, 30d cohort trend lines, company breadth, and source coverage metrics.
+  5. **My Skill Profile ("1-Skill Away")**: Candidate profile manager with verified technical skill tags and decoupled experience gap warnings.
+  6. **Source Health & Sync History**: Real-time lifecycle observability with status polling (`/api/sync/status`), source latencies, and sync audit logs.
+- **Cyberpunk Terminal Navigation**: Keyboard shortcuts (`1`–`6` for instant tab switching, `j`/`k` for card navigation, `Enter`/`Space` to inspect, `Escape` to close/blur, `?` for help modal, and synthesized Web Audio keyclicks and telemetry chimes).
+
+---
+
+## 7. Canonical Codebase vs Legacy Directory Deprecation
+
+- **Active Production Root**: `backend/` and `frontend/`.
+- **Deprecated Stubs**: `devradar-ui/` and `job-radar-api/` are legacy artifacts kept for backwards-compatibility reference. All future features, tests, migrations, and CI workflows strictly execute against `backend/` and `frontend/`.
+

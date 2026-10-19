@@ -95,6 +95,7 @@ async def test_snapshot_version_diff_and_provenance(test_session: AsyncSession):
     await reconciler.execute_sync_run(source, posting_v2, pagination_complete=True, requests_count=1)
 
     # Re-inspect Job state after V2
+    session.expire_all()
     job = (await session.execute(job_stmt)).scalar_one()
 
     # Snapshot history must be preserved (provenance integrity)
