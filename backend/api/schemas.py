@@ -34,6 +34,7 @@ class JobDetailSchema(BaseModel):
     department: Optional[str] = None
     location: str
     work_arrangement: str
+    seniority: str = "unspecified"
     apply_url: str
     source_url: Optional[str] = None
     requisition_id: Optional[str] = None
@@ -41,7 +42,13 @@ class JobDetailSchema(BaseModel):
     is_demo: bool = False
     first_seen_at: datetime
     last_seen_at: datetime
+    source_created_at: Optional[datetime] = None
+    source_updated_at: Optional[datetime] = None
     lifecycle_status: str
+    primary_min_yoe: Optional[int] = None
+    salary_min: Optional[float] = None
+    salary_max: Optional[float] = None
+    salary_currency: Optional[str] = None
     consecutive_missing_syncs: int
     normalized_description: str
     description_hash: str
@@ -57,20 +64,28 @@ class JobDetailSchema(BaseModel):
 class JobListItemSchema(BaseModel):
     job_id: str
     company: str
+    company_id: Optional[str] = None
     company_domain: Optional[str] = None
     canonical_category: str
     title: str
     department: Optional[str] = None
     location: str
     work_arrangement: str
+    seniority: str = "unspecified"
     apply_url: str
     requisition_id: Optional[str] = None
     internal_job_id: Optional[str] = None
     is_demo: bool = False
     first_seen_at: datetime
     last_seen_at: datetime
+    source_created_at: Optional[datetime] = None
+    source_updated_at: Optional[datetime] = None
     lifecycle_status: str
+    # None means the posting states no parsable years requirement ("unspecified").
     primary_min_yoe: Optional[int] = None
+    salary_min: Optional[float] = None
+    salary_max: Optional[float] = None
+    salary_currency: Optional[str] = None
     required_skills: List[str] = []
     preferred_skills: List[str] = []
 
@@ -78,6 +93,7 @@ class JobsResponse(BaseModel):
     total_count: int
     page: int
     page_size: int
+    total_pages: int = 1
     jobs: List[JobListItemSchema]
     sector_counts: Dict[str, int] = Field(default_factory=dict)
 
@@ -103,6 +119,8 @@ class TelemetryResponse(BaseModel):
     denominator_count: Optional[int] = None
     source_coverage_count: Optional[int] = 0
     newly_observed_cohort_total: Optional[int] = 0
+    has_prior_window: bool = False
+    prior_window_jobs: int = 0
     data_quality_warnings: List[str]
     skills_telemetry: List[SkillTelemetryItem]
 
@@ -122,9 +140,15 @@ class CandidateSkillInput(BaseModel):
     notes: Optional[str] = None
 
 class CandidateProfileUpdate(BaseModel):
+    """overall_yoe is only written when the client sends the field; omitting it keeps the stored value."""
     name: str
     overall_yoe: Optional[float] = None
     skills: List[CandidateSkillInput]
+
+class TaxonomySkillSchema(BaseModel):
+    skill_id: str
+    skill_name: str
+    category: str
 
 class SourceItemSchema(BaseModel):
     source_id: str
@@ -134,6 +158,7 @@ class SourceItemSchema(BaseModel):
     base_url: str
     health_status: str
     enabled: bool
+    feed_status: str = "live"  # live | disabled | no_public_feed
     last_successful_sync: Optional[datetime] = None
     last_attempted_sync: Optional[datetime] = None
     last_error: Optional[str] = None
@@ -159,6 +184,8 @@ class CompanyItemSchema(BaseModel):
     name: str
     canonical_category: str
     website_url: Optional[str] = None
+    domain: Optional[str] = None
+    feed_status: str = "live"  # live | disabled | no_public_feed
     active_jobs_count: int
 
 class SyncStatusSchema(BaseModel):

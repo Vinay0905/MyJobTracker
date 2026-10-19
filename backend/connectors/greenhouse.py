@@ -1,4 +1,5 @@
 from typing import List, Dict, Any, Tuple
+import html
 import json
 import logging
 from backend.connectors.base import ResilientHTTPClient
@@ -48,7 +49,7 @@ class GreenhouseConnector:
             posting_id = str(item.get("id"))
             depts = ", ".join([d.get("name", "") for d in item.get("departments", []) if d.get("name")])
             offices = ", ".join([o.get("name", "") for o in item.get("offices", []) if o.get("name")])
-            location_str = item.get("location", {}).get("name") or offices or "Remote / Global"
+            location_str = (item.get("location") or {}).get("name") or offices or ""
 
             results.append({
                 "provider_posting_id": posting_id,
@@ -59,8 +60,10 @@ class GreenhouseConnector:
                 "location": location_str,
                 "apply_url": item.get("absolute_url") or f"https://boards.greenhouse.io/{self.board_token}/jobs/{posting_id}",
                 "source_url": item.get("absolute_url"),
+                "source_created_at": item.get("first_published"),
                 "source_updated_at": item.get("updated_at"),
-                "raw_html": item.get("content", ""),
+                # Greenhouse returns `content` as entity-escaped HTML.
+                "raw_html": html.unescape(item.get("content") or ""),
             })
 
         # Greenhouse single-endpoint pull is atomic and complete

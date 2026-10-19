@@ -155,7 +155,7 @@ async def test_api_sync_status_endpoint():
 
 @pytest.mark.asyncio
 async def test_api_company_filtering_and_sorting(test_session: AsyncSession):
-    """Verifies single and multi-company filtering as well as all 8 backend sort orders."""
+    """Verifies exact company_id filtering (single and multi) as well as all 8 backend sort orders."""
     # Seed a second job for a different company
     job2 = Job(
         job_id="rockstar_greenhouse:888",
@@ -180,15 +180,20 @@ async def test_api_company_filtering_and_sorting(test_session: AsyncSession):
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        # 1. Single company filter
-        resp_single = await ac.get("/api/jobs?company=epic")
+        # 1. Single company filter (exact company_id)
+        resp_single = await ac.get("/api/jobs?company=epicgames")
         assert resp_single.status_code == 200
         data_single = resp_single.json()
         assert data_single["total_count"] == 1
         assert data_single["jobs"][0]["job_id"] == "epic_greenhouse:999"
+        assert data_single["jobs"][0]["company_id"] == "epicgames"
 
-        # 2. Multi-company filter (comma-separated)
-        resp_multi = await ac.get("/api/jobs?company=epic,rockstar")
+        # A partial id is not a company id
+        resp_partial = await ac.get("/api/jobs?company=epic")
+        assert resp_partial.json()["total_count"] == 0
+
+        # 2. Multi-company filter (comma-separated exact ids)
+        resp_multi = await ac.get("/api/jobs?company=epicgames,rockstar")
         assert resp_multi.status_code == 200
         data_multi = resp_multi.json()
         assert data_multi["total_count"] == 2

@@ -1,8 +1,11 @@
 import asyncio
-from typing import Optional, List
+import logging
+import math
+import uuid
+from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from datetime import datetime, timezone
-from sqlalchemy import select, func, desc, asc, or_
+from sqlalchemy import select, func, desc, asc, or_, and_, literal
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,6 +20,7 @@ from backend.db.models import (
     SyncRun,
     CandidateProfile,
     CandidateSkillEvidence,
+    TaxonomySkill,
     LifecycleStatus,
 )
 from backend.api.schemas import (
@@ -34,11 +38,16 @@ from backend.api.schemas import (
     CandidateProfileUpdate,
     CompanyItemSchema,
     SyncStatusSchema,
+    TaxonomySkillSchema,
 )
 from backend.services.telemetry import TelemetryEngine
 from backend.services.gap_analyzer import GapAnalyzerService
 from backend.connectors.manager import ConnectorManager
 from backend.services.reconciler import SafeReconciliationEngine
+from backend.extraction.attributes import SENIORITY_LEVELS, UNSPECIFIED, PAY_BANDS, PAY_UNKNOWN
+from backend.extraction.taxonomy import resolve_skill
+
+logger = logging.getLogger("devradar.api")
 
 router = APIRouter(prefix="/api")
 
@@ -49,7 +58,7 @@ class GlobalSyncState:
         self.current_run_id: Optional[str] = None
         self.started_at: Optional[datetime] = None
         self.completed_at: Optional[datetime] = None
-        self.status: str = "idle"  # idle | running | completed | partial | failed
+        self.status: str = "idle"  # idle | queued | running | completed | partial | failed
         self.current_source: Optional[str] = None
         self.total_sources: int = 0
         self.completed_sources: int = 0
@@ -66,7 +75,8 @@ SYNC_LOCK = asyncio.Lock()
 async def get_health(session: AsyncSession = Depends(get_db_session)):
     """Distinguishes internal application health from external ATS source health."""
     sources = (await session.execute(select(Source))).scalars().all()
-    degraded_sources = [s.source_id for s in sources if s.health_status != "HEALTHY"]
+    # Disabled sources (including companies with no public feed) are not live sync failures.
+    degraded_sources = [s.source_id for s in sources if s.enabled and s.health_status != "HEALTHY"]
 
     return {
         "status": "healthy",
@@ -80,7 +90,7 @@ from urllib.parse import urlparse
 
 def extract_domain(website_url: Optional[str], company_name: str) -> str:
     if website_url:
-        netloc = urlparse(website_url).netloc.lower()
+        netloc = urlparse(website_url if "//" in website_url else f"https://{website_url}").netloc.lower()
         if netloc.startswith("www."):
             netloc = netloc[4:]
         if netloc:
@@ -98,6 +108,7 @@ def extract_domain(website_url: Optional[str], company_name: str) -> str:
         "microsoft": "microsoft.com",
         "roblox": "roblox.com",
         "playstation studios": "playstation.com",
+        "naughty dog": "naughtydog.com",
         "sony interactive entertainment": "playstation.com",
         "cerebras": "cerebras.ai",
         "cerebras systems": "cerebras.ai",
@@ -112,50 +123,234 @@ def extract_domain(website_url: Optional[str], company_name: str) -> str:
     cleaned = company_name.lower().strip()
     return FALLBACK_DOMAINS.get(cleaned, f"{cleaned.replace(' ', '')}.com")
 
+# Role-focus tracks match on track-specific skills or whole-word title/department keywords.
+# General-purpose languages (C++, C) are deliberately absent from the specialized tracks so that
+# every C++ posting is not counted as NPC AI, physics, and embedded at once.
 ROLE_FOCUS_MAP = {
     # Granular Focus Tracks
     "ai npcs & game ai": {
-        "skills": ["npc_ai", "game_ai", "behavior_trees", "fsm", "goap", "utility_ai", "pathfinding", "crowd_simulation", "reinforcement_learning", "agentic_ai", "eqs", "unreal_engine", "unity", "cpp"],
-        "keywords": ["npc", "game ai", "behavior tree", "navmesh", "pathfinding", "agentic", "reinforcement learning", "massentity", "ai character", "gameplay ai", "fsm"]
+        "skills": ["npc_ai", "game_ai", "behavior_trees", "fsm", "goap", "utility_ai", "pathfinding", "crowd_simulation", "reinforcement_learning", "agentic_ai", "eqs"],
+        "keywords": ["npc", "npcs", "game ai", "gameplay ai", "ai programmer", "ai engineer", "behavior tree", "navmesh", "pathfinding", "agentic", "reinforcement learning", "massentity", "ai character", "ai characters", "fsm"]
     },
     "physics & simulation": {
-        "skills": ["physics_engine", "collision_detection", "ragdoll_physics", "procedural_animation", "physics_middleware", "simd", "linear_algebra", "simulation_frameworks", "cpp"],
+        "skills": ["physics_engine", "collision_detection", "ragdoll_physics", "procedural_animation", "physics_middleware", "simd", "linear_algebra", "simulation_frameworks"],
         "keywords": ["physics", "simulation", "rigid body", "collision", "ragdoll", "kinematics", "physx", "havok", "chaos", "mujoco", "isaac sim", "omniverse", "dynamics"]
     },
     "gpu / cuda & silicon": {
-        "skills": ["cuda", "rocm", "tensorrt", "triton", "opencl", "gpu_kernels", "parallel_computing", "verilog", "pytorch"],
-        "keywords": ["cuda", "gpu", "rocm", "tensorrt", "triton", "kernel", "silicon", "accelerator", "parallel"]
+        "skills": ["cuda", "rocm", "tensorrt", "triton", "opencl", "gpu_kernels", "parallel_computing", "verilog"],
+        "keywords": ["cuda", "gpu", "gpus", "rocm", "tensorrt", "triton", "kernel", "kernels", "silicon", "accelerator", "asic", "fpga"]
     },
     "edge ai & embedded ece": {
-        "skills": ["freertos", "device_drivers", "microcontrollers", "model_quantization", "rtos", "firmware", "arm", "c", "cpp"],
-        "keywords": ["edge ai", "embedded", "rtos", "freertos", "zephyr", "qnx", "mcu", "microcontroller", "firmware", "driver", "tinyml", "arm"]
+        "skills": ["freertos", "device_drivers", "microcontrollers", "model_quantization", "rtos", "firmware"],
+        "keywords": ["edge ai", "embedded", "rtos", "freertos", "zephyr", "qnx", "mcu", "microcontroller", "firmware", "driver", "drivers", "tinyml", "bsp"]
     },
     "ai servers & cloud": {
         "skills": ["distributed_systems", "rdma_networking", "sre", "linux_kernel", "docker", "kubernetes", "terraform", "ci_cd", "aws", "gcp"],
-        "keywords": ["cloud", "distributed", "cluster", "rdma", "infiniband", "kubernetes", "docker", "infra", "sre", "networking"]
+        "keywords": ["cloud", "distributed", "cluster", "rdma", "infiniband", "kubernetes", "docker", "infrastructure", "infra", "sre", "networking"]
     },
     # Backwards-compatible aliases
     "systems / c++": {
         "skills": ["cpp", "c", "linux_kernel", "multithreading", "distributed_systems", "os_concepts", "performance"],
-        "keywords": ["system", "c++", "kernel", "runtime", "compiler", "performance", "low-level", "low level"]
+        "keywords": ["system", "systems", "c++", "kernel", "runtime", "compiler", "performance", "low level"]
     },
     "ai & gpu / cuda": {
         "skills": ["cuda", "pytorch", "tensorrt", "triton", "llm", "deep_learning", "machine_learning", "computer_vision", "distributed_training"],
-        "keywords": ["ai", "ml", "deep learning", "gpu", "cuda", "vision", "neural", "algorithm", "machine learning"]
+        "keywords": ["ai", "ml", "deep learning", "gpu", "cuda", "vision", "neural", "machine learning"]
     },
     "game engine / graphics": {
         "skills": ["unreal_engine", "unity", "vulkan", "directx", "opengl", "shaders", "rendering", "physics"],
-        "keywords": ["graphics", "engine", "rendering", "game", "gameplay", "vulkan", "unreal", "shader", "animation", "audio"]
+        "keywords": ["graphics", "engine", "rendering", "game", "games", "gameplay", "vulkan", "unreal", "shader", "shaders", "animation", "audio"]
     },
     "cloud & devops": {
         "skills": ["docker", "kubernetes", "aws", "gcp", "ci_cd", "terraform", "linux", "cloud"],
         "keywords": ["cloud", "devops", "sre", "infrastructure", "platform", "reliability", "deployment", "pipeline"]
     },
     "embedded / firmware": {
-        "skills": ["rtos", "firmware", "arm", "c", "verilog", "fpga", "soc"],
-        "keywords": ["embedded", "firmware", "rtos", "arm", "soc", "driver", "bsp", "board", "hardware"]
+        "skills": ["rtos", "firmware", "arm", "verilog", "fpga", "soc"],
+        "keywords": ["embedded", "firmware", "rtos", "arm", "soc", "driver", "drivers", "bsp", "board", "hardware"]
     }
 }
+
+_WORD_SEPARATORS = [",", "/", "-", "(", ")", "|", ";", ":", ".", "&", "\n"]
+
+def _normalize_term(term: str) -> str:
+    out = term.lower()
+    for ch in _WORD_SEPARATORS:
+        out = out.replace(ch, " ")
+    return " ".join(out.split())
+
+def _word_match(column, term: str):
+    """Case-insensitive whole-word match: 'ca' matches 'Santa Clara, CA' but not 'Canada'."""
+    expr = func.lower(column)
+    for ch in _WORD_SEPARATORS:
+        expr = func.replace(expr, ch, " ")
+    padded = literal(" ").concat(expr).concat(" ")
+    return padded.like(f"% {_normalize_term(term)} %")
+
+# Region presets list whole words; two-letter tokens are only state/country codes that are not English words.
+LOCATION_PRESETS = {
+    "uae": ["dubai", "abu dhabi", "uae", "united arab emirates", "middle east", "sharjah"],
+    "us_eu": [
+        "united states", "usa", "us", "america",
+        "ca", "wa", "tx", "ny", "nc", "ma", "co", "il", "ga", "fl", "pa", "va", "ut", "az", "mn", "mi", "nj", "md", "dc",
+        "california", "washington", "texas", "new york", "north carolina", "massachusetts",
+        "santa clara", "austin", "cary", "seattle", "san francisco", "san mateo", "sunnyvale", "los angeles", "san diego", "santa monica",
+        "united kingdom", "uk", "england", "scotland", "edinburgh", "london", "dundee", "lincoln", "leeds",
+        "europe", "eu", "emea", "germany", "france", "serbia", "denmark", "sweden", "poland", "netherlands",
+        "ireland", "spain", "italy", "finland", "norway", "switzerland", "austria", "belgium", "portugal",
+        "czech republic", "czechia", "romania", "berlin", "munich", "paris", "stockholm", "copenhagen", "warsaw", "amsterdam",
+    ],
+    "india": ["india", "bengaluru", "bangalore", "pune", "hyderabad", "mumbai", "chennai", "noida", "gurgaon", "gurugram"],
+}
+LOCATION_PRESET_ALIASES = {
+    "uae / me": "uae", "uae": "uae", "middle east": "uae", "me": "uae",
+    "us / eu": "us_eu", "us": "us_eu", "eu": "us_eu", "usa": "us_eu", "europe": "us_eu",
+    "india": "india",
+}
+
+def _csv(value: Optional[str]) -> List[str]:
+    return [v.strip() for v in (value or "").split(",") if v.strip()]
+
+def _resolve_role_focus(role: str) -> Optional[Dict[str, List[str]]]:
+    cfg = ROLE_FOCUS_MAP.get(role)
+    if cfg:
+        return cfg
+    norm_r = role.replace("&", "and").replace("/", " ")
+    for k, v in ROLE_FOCUS_MAP.items():
+        norm_k = k.replace("&", "and").replace("/", " ")
+        if norm_r == norm_k or any(part in norm_k for part in norm_r.split() if len(part) > 2):
+            return v
+    return None
+
+def _snapshot_bound_skill(*conditions):
+    snapshot_match = or_(
+        and_(Job.latest_snapshot_id.is_(None), JobSkillEvidence.snapshot_id.is_(None)),
+        JobSkillEvidence.snapshot_id == Job.latest_snapshot_id,
+    )
+    return Job.skills.any(and_(snapshot_match, *conditions))
+
+def build_job_filters(
+    *,
+    company: Optional[str] = None,
+    location: Optional[str] = None,
+    role_focus: Optional[str] = None,
+    skill: Optional[str] = None,
+    required_skill: Optional[str] = None,
+    preferred_skill: Optional[str] = None,
+    seniority: Optional[str] = None,
+    pay_band: Optional[str] = None,
+    yoe_min: Optional[int] = None,
+    yoe_max: Optional[int] = None,
+    include_unspecified_yoe: bool = True,
+    lifecycle_status: Optional[str] = "ACTIVE",
+    work_arrangement: Optional[str] = None,
+    search: Optional[str] = None,
+    include_demo: bool = False,
+) -> list:
+    """WHERE clauses shared by the job list, its count, and the sector counts (everything except sector)."""
+    clauses = []
+
+    if not include_demo:
+        clauses.append(Job.is_demo == False)
+
+    if lifecycle_status and lifecycle_status.upper() != "ALL":
+        clauses.append(Job.lifecycle_status == lifecycle_status.upper())
+
+    company_ids = _csv(company)
+    if company_ids:
+        clauses.append(Job.source_id.in_(select(Source.source_id).where(Source.company_id.in_(company_ids))))
+
+    if location:
+        loc_clean = location.strip().lower()
+        preset = LOCATION_PRESET_ALIASES.get(loc_clean)
+        if loc_clean in ("remote", "remote only"):
+            clauses.append(or_(Job.work_arrangement == "remote", _word_match(Job.location, "remote")))
+        elif preset:
+            preset_clauses = [_word_match(Job.location, term) for term in LOCATION_PRESETS[preset]]
+            if preset == "uae":
+                preset_clauses.append(Job.canonical_category == "UAE & Middle East")
+            clauses.append(or_(*preset_clauses))
+        elif loc_clean not in ("global", "all"):
+            clauses.append(Job.location.ilike(f"%{location.strip()}%"))
+
+    if work_arrangement:
+        clauses.append(Job.work_arrangement == work_arrangement.strip().lower())
+
+    if search:
+        search_term = f"%{search}%"
+        clauses.append(
+            (Job.title.ilike(search_term))
+            | (Job.department.ilike(search_term))
+            | (Job.normalized_description.ilike(search_term))
+        )
+
+    if role_focus:
+        role_clauses = []
+        for r in [x.lower() for x in _csv(role_focus)]:
+            cfg = _resolve_role_focus(r)
+            if not cfg:
+                continue
+            role_clauses.append(or_(
+                _snapshot_bound_skill(JobSkillEvidence.skill_id.in_(cfg["skills"])),
+                *[_word_match(Job.title, kw) for kw in cfg["keywords"]],
+                *[_word_match(Job.department, kw) for kw in cfg["keywords"]],
+            ))
+        if role_clauses:
+            clauses.append(or_(*role_clauses))
+
+    # Skill filters bind strictly to current snapshot evidence
+    if skill:
+        clauses.append(_snapshot_bound_skill(JobSkillEvidence.skill_id.ilike(skill)))
+    if required_skill:
+        clauses.append(_snapshot_bound_skill(
+            JobSkillEvidence.skill_id.ilike(required_skill),
+            JobSkillEvidence.requirement_type == "required",
+        ))
+    if preferred_skill:
+        clauses.append(_snapshot_bound_skill(
+            JobSkillEvidence.skill_id.ilike(preferred_skill),
+            JobSkillEvidence.requirement_type == "preferred",
+        ))
+
+    levels = [lv.lower() for lv in _csv(seniority)]
+    if levels:
+        unknown_levels = [lv for lv in levels if lv not in SENIORITY_LEVELS and lv != UNSPECIFIED]
+        if unknown_levels:
+            raise HTTPException(status_code=400, detail=f"Unknown seniority {unknown_levels}. Supported: {SENIORITY_LEVELS + [UNSPECIFIED]}")
+        clauses.append(Job.seniority.in_(levels))
+
+    bands = [b.lower() for b in _csv(pay_band)]
+    if bands:
+        band_clauses = []
+        top_of_range = func.coalesce(Job.salary_max, Job.salary_min)
+        for band in bands:
+            if band == PAY_UNKNOWN:
+                band_clauses.append(Job.salary_min.is_(None))
+                continue
+            if band not in PAY_BANDS:
+                raise HTTPException(status_code=400, detail=f"Unknown pay_band '{band}'. Supported: {list(PAY_BANDS) + [PAY_UNKNOWN]}")
+            lo, hi = PAY_BANDS[band]
+            conds = [Job.salary_min.isnot(None)]
+            if hi is not None:
+                conds.append(Job.salary_min < hi)
+            if lo is not None:
+                conds.append(top_of_range >= lo)
+            band_clauses.append(and_(*conds))
+        clauses.append(or_(*band_clauses))
+
+    # Years range uses the stored governing_min_years(); unspecified roles stay unless excluded.
+    if yoe_min is not None or yoe_max is not None:
+        in_range = [Job.required_yoe.isnot(None)]
+        if yoe_min is not None:
+            in_range.append(Job.required_yoe >= yoe_min)
+        if yoe_max is not None:
+            in_range.append(Job.required_yoe <= yoe_max)
+        range_clause = and_(*in_range)
+        clauses.append(or_(range_clause, Job.required_yoe.is_(None)) if include_unspecified_yoe else range_clause)
+    elif not include_unspecified_yoe:
+        clauses.append(Job.required_yoe.isnot(None))
+
+    return clauses
 
 @router.get("/companies", response_model=List[CompanyItemSchema])
 async def list_companies(
@@ -163,7 +358,7 @@ async def list_companies(
     session: AsyncSession = Depends(get_db_session)
 ):
     """Returns dynamic registry of known companies with live active job counts."""
-    companies_stmt = select(Company).order_by(Company.name.asc())
+    companies_stmt = select(Company).options(selectinload(Company.sources)).order_by(Company.name.asc())
     companies = (await session.execute(companies_stmt)).scalars().all()
 
     job_counts_stmt = (
@@ -178,12 +373,21 @@ async def list_companies(
     counts_res = (await session.execute(job_counts_stmt)).all()
     counts_map = {row[0]: row[1] for row in counts_res}
 
+    def company_feed_status(c: Company) -> str:
+        statuses = {ConnectorManager.feed_status(s.provider_type, s.enabled) for s in c.sources}
+        for status in ("live", "no_public_feed", "disabled"):
+            if status in statuses:
+                return status
+        return "disabled"
+
     results = [
         CompanyItemSchema(
             company_id=c.company_id,
             name=c.name,
             canonical_category=c.canonical_category,
             website_url=c.website_url,
+            domain=extract_domain(c.website_url, c.name),
+            feed_status=company_feed_status(c),
             active_jobs_count=counts_map.get(c.company_id, 0),
         )
         for c in companies
@@ -191,20 +395,36 @@ async def list_companies(
     results.sort(key=lambda x: (-x.active_jobs_count, x.name))
     return results
 
+SUPPORTED_SORT_OPTIONS = {
+    "newest_discovered",
+    "recently_posted",
+    "company_asc",
+    "company_desc",
+    "title_asc",
+    "title_desc",
+    "location_asc",
+    "recently_updated",
+}
+
 @router.get("/jobs", response_model=JobsResponse)
 async def list_jobs(
-    company: Optional[str] = Query(None, description="Filter by company ID or name (comma-separated for multi-company)"),
+    company: Optional[str] = Query(None, description="Comma-separated exact company_ids, e.g. 'nvidia,epicgames'"),
     sort_by: str = Query("newest_discovered", description="Sort order: newest_discovered | recently_posted | company_asc | company_desc | title_asc | title_desc | location_asc | recently_updated"),
     category: Optional[str] = Query(None, description="Silicon & AI | Game Studio | UAE & Middle East"),
-    location: Optional[str] = Query(None, description="City, country, or remote preset"),
+    location: Optional[str] = Query(None, description="City, country, or region preset (UAE / ME, US / EU, India, Remote Only)"),
     role_focus: Optional[str] = Query(None, description="Comma-separated role focuses e.g. 'AI NPCs & Game AI,Physics & Simulation'"),
     skill: Optional[str] = Query(None, description="Any matching skill name or ID"),
     required_skill: Optional[str] = Query(None, description="Skill strictly required"),
     preferred_skill: Optional[str] = Query(None, description="Skill preferred"),
-    max_required_yoe: Optional[int] = Query(None, description="Filter out roles requiring > max_required_yoe (e.g. 6)"),
-    min_yoe: Optional[int] = Query(None, description="Alias for max_required_yoe"),
+    seniority: Optional[str] = Query(None, description="Comma-separated: intern, associate, mid, senior, staff, principal, unspecified"),
+    pay_band: Optional[str] = Query(None, description="Comma-separated: under_100k, 100_150k, 150_200k, 200k_plus, unknown"),
+    yoe_min: Optional[int] = Query(None, ge=0, description="Roles whose required years are >= yoe_min"),
+    yoe_max: Optional[int] = Query(None, ge=0, description="Roles whose required years are <= yoe_max"),
+    include_unspecified_yoe: bool = Query(True, description="Keep roles with no stated years requirement when a years range is set"),
+    max_required_yoe: Optional[int] = Query(None, description="Deprecated alias for yoe_max"),
+    min_yoe: Optional[int] = Query(None, description="Deprecated alias for yoe_max"),
     lifecycle_status: Optional[str] = Query("ACTIVE", description="ACTIVE | MISSING_CANDIDATE | CLOSED | ALL"),
-    work_arrangement: Optional[str] = Query(None, description="remote | hybrid | onsite"),
+    work_arrangement: Optional[str] = Query(None, description="remote | hybrid | onsite | unknown"),
     search: Optional[str] = Query(None, description="Text search title, department, description"),
     include_demo: bool = Query(False, description="Include demo fixtures"),
     page: int = Query(1, ge=1),
@@ -212,222 +432,56 @@ async def list_jobs(
     session: AsyncSession = Depends(get_db_session),
 ):
     """Paginated, multi-attribute filtered engineering job list with backend-driven sorting."""
-    SUPPORTED_SORT_OPTIONS = {
-        "newest_discovered",
-        "recently_posted",
-        "company_asc",
-        "company_desc",
-        "title_asc",
-        "title_desc",
-        "location_asc",
-        "recently_updated",
-    }
     if sort_by not in SUPPORTED_SORT_OPTIONS:
         raise HTTPException(
             status_code=400,
             detail=f"Invalid sort_by '{sort_by}'. Supported options: {sorted(list(SUPPORTED_SORT_OPTIONS))}"
         )
 
-    stmt = select(Job).options(
-        selectinload(Job.skills),
-        selectinload(Job.experience_requirements),
-        selectinload(Job.snapshots),
-        selectinload(Job.source).selectinload(Source.company),
+    effective_yoe_max = yoe_max if yoe_max is not None else (max_required_yoe if max_required_yoe is not None else min_yoe)
+    shared_clauses = build_job_filters(
+        company=company,
+        location=location,
+        role_focus=role_focus,
+        skill=skill,
+        required_skill=required_skill,
+        preferred_skill=preferred_skill,
+        seniority=seniority,
+        pay_band=pay_band,
+        yoe_min=yoe_min,
+        yoe_max=effective_yoe_max,
+        include_unspecified_yoe=include_unspecified_yoe,
+        lifecycle_status=lifecycle_status,
+        work_arrangement=work_arrangement,
+        search=search,
+        include_demo=include_demo,
     )
-
-    if not include_demo:
-        stmt = stmt.where(Job.is_demo == False)
-
-    if lifecycle_status and lifecycle_status.upper() != "ALL":
-        stmt = stmt.where(Job.lifecycle_status == lifecycle_status.upper())
-
-    company_joined = False
-    if company:
-        stmt = stmt.join(Job.source).join(Source.company)
-        company_joined = True
-        comp_tokens = [c.strip() for c in company.split(",") if c.strip()]
-        if comp_tokens:
-            comp_clauses = [
-                or_(
-                    Company.name.ilike(f"%{token}%"),
-                    Company.company_id.ilike(f"%{token}%")
-                )
-                for token in comp_tokens
-            ]
-            stmt = stmt.where(or_(*comp_clauses))
-
+    list_clauses = list(shared_clauses)
     if category:
-        stmt = stmt.where(Job.canonical_category.ilike(f"%{category}%"))
+        list_clauses.append(Job.canonical_category.ilike(f"%{category}%"))
 
-    if location:
-        loc_clean = location.strip().lower()
-        if loc_clean in ["remote", "remote only"]:
-            stmt = stmt.where(
-                or_(
-                    Job.work_arrangement == "remote",
-                    Job.location.ilike("%remote%")
-                )
-            )
-        elif loc_clean in ["uae / me", "uae", "middle east", "me"]:
-            stmt = stmt.where(
-                or_(
-                    Job.location.ilike("%dubai%"),
-                    Job.location.ilike("%abu dhabi%"),
-                    Job.location.ilike("%uae%"),
-                    Job.location.ilike("%united arab emirates%"),
-                    Job.location.ilike("%middle east%"),
-                    Job.canonical_category == "UAE & Middle East"
-                )
-            )
-        elif loc_clean in ["us / eu", "us", "eu", "usa", "europe"]:
-            stmt = stmt.where(
-                or_(
-                    Job.location.ilike("%united states%"),
-                    Job.location.ilike("%usa%"),
-                    Job.location.ilike("%ca%"),
-                    Job.location.ilike("%nc%"),
-                    Job.location.ilike("%tx%"),
-                    Job.location.ilike("%wa%"),
-                    Job.location.ilike("%ny%"),
-                    Job.location.ilike("%santa clara%"),
-                    Job.location.ilike("%austin%"),
-                    Job.location.ilike("%cary%"),
-                    Job.location.ilike("%seattle%"),
-                    Job.location.ilike("%united kingdom%"),
-                    Job.location.ilike("%uk%"),
-                    Job.location.ilike("%edinburgh%"),
-                    Job.location.ilike("%london%"),
-                    Job.location.ilike("%dundee%"),
-                    Job.location.ilike("%germany%"),
-                    Job.location.ilike("%france%"),
-                    Job.location.ilike("%serbia%"),
-                    Job.location.ilike("%denmark%"),
-                    Job.location.ilike("%sweden%"),
-                    Job.location.ilike("%poland%"),
-                    Job.location.ilike("%netherlands%")
-                )
-            )
-        elif loc_clean == "india":
-            stmt = stmt.where(
-                or_(
-                    Job.location.ilike("%india%"),
-                    Job.location.ilike("%bengaluru%"),
-                    Job.location.ilike("%bangalore%"),
-                    Job.location.ilike("%pune%"),
-                    Job.location.ilike("%hyderabad%"),
-                    Job.location.ilike("%mumbai%"),
-                    Job.location.ilike("%chennai%")
-                )
-            )
-        elif loc_clean in ["global", "all"]:
-            pass
-        else:
-            stmt = stmt.where(Job.location.ilike(f"%{location}%"))
+    total_count = (await session.execute(
+        select(func.count(Job.job_id)).where(*list_clauses)
+    )).scalar() or 0
+    total_pages = max(1, math.ceil(total_count / page_size))
 
-    if work_arrangement:
-        stmt = stmt.where(Job.work_arrangement.ilike(f"%{work_arrangement}%"))
-
-    if search:
-        search_term = f"%{search}%"
-        stmt = stmt.where(
-            (Job.title.ilike(search_term))
-            | (Job.department.ilike(search_term))
-            | (Job.normalized_description.ilike(search_term))
-        )
-
-    # Filter for role focus
-    if role_focus:
-        selected_roles = [r.strip().lower() for r in role_focus.split(",") if r.strip()]
-        role_clauses = []
-        for r in selected_roles:
-            cfg = ROLE_FOCUS_MAP.get(r)
-            if not cfg:
-                norm_r = r.replace("&", "and").replace("/", " ")
-                for k, v in ROLE_FOCUS_MAP.items():
-                    norm_k = k.replace("&", "and").replace("/", " ")
-                    if norm_r == norm_k or any(part in norm_k for part in norm_r.split() if len(part) > 2):
-                        cfg = v
-                        break
-            if cfg:
-                clause = or_(
-                    Job.skills.any(
-                        (JobSkillEvidence.snapshot_id == Job.latest_snapshot_id)
-                        & (JobSkillEvidence.skill_id.in_(cfg["skills"]))
-                    ),
-                    *[Job.title.ilike(f"%{kw}%") for kw in cfg["keywords"]],
-                    *[Job.department.ilike(f"%{kw}%") for kw in cfg["keywords"]],
-                )
-                role_clauses.append(clause)
-        if role_clauses:
-            stmt = stmt.where(or_(*role_clauses))
-
-    # Subquery filter for skills strictly against current snapshot evidence
-    if skill:
-        stmt = stmt.where(
-            Job.skills.any(
-                (
-                    (Job.latest_snapshot_id == None)
-                    | (JobSkillEvidence.snapshot_id == Job.latest_snapshot_id)
-                )
-                & (JobSkillEvidence.skill_id.ilike(skill))
-            )
-        )
-    if required_skill:
-        stmt = stmt.where(
-            Job.skills.any(
-                (
-                    (Job.latest_snapshot_id == None)
-                    | (JobSkillEvidence.snapshot_id == Job.latest_snapshot_id)
-                )
-                & (JobSkillEvidence.skill_id.ilike(required_skill))
-                & (JobSkillEvidence.requirement_type == "required")
-            )
-        )
-    if preferred_skill:
-        stmt = stmt.where(
-            Job.skills.any(
-                (
-                    (Job.latest_snapshot_id == None)
-                    | (JobSkillEvidence.snapshot_id == Job.latest_snapshot_id)
-                )
-                & (JobSkillEvidence.skill_id.ilike(preferred_skill))
-                & (JobSkillEvidence.requirement_type == "preferred")
-            )
-        )
-
-    # Filter for max required YOE (keeps <= effective_max_yoe and unspecified-YOE roles)
-    effective_max_yoe = max_required_yoe if max_required_yoe is not None else min_yoe
-    if effective_max_yoe is not None:
-        stmt = stmt.where(
-            ~Job.experience_requirements.any(
-                (
-                    (Job.latest_snapshot_id == None)
-                    | (JobExperienceRequirement.snapshot_id == Job.latest_snapshot_id)
-                )
-                & (JobExperienceRequirement.min_years > effective_max_yoe)
-            )
-        )
-
-    # Execute total count query
-    count_stmt = select(func.count()).select_from(stmt.subquery())
-    total_count = (await session.execute(count_stmt)).scalar() or 0
-
-    # Sector counts
+    # Sector counts apply every filter except the sector itself
     sector_stmt = (
         select(Job.canonical_category, func.count(Job.job_id))
-        .where(Job.lifecycle_status == "ACTIVE")
+        .where(*shared_clauses)
+        .group_by(Job.canonical_category)
     )
-    if not include_demo:
-        sector_stmt = sector_stmt.where(Job.is_demo == False)
-    sector_stmt = sector_stmt.group_by(Job.canonical_category)
     sector_counts_raw = (await session.execute(sector_stmt)).all()
     sector_counts = {row[0]: row[1] for row in sector_counts_raw if row[0]}
     sector_counts["All Sectors"] = sum(sector_counts.values())
 
-    # Sorting
-    if sort_by in ("company_asc", "company_desc") and not company_joined:
-        stmt = stmt.join(Job.source).join(Source.company)
-        company_joined = True
+    stmt = select(Job).options(
+        selectinload(Job.skills),
+        selectinload(Job.source).selectinload(Source.company),
+    ).where(*list_clauses)
+
+    if sort_by in ("company_asc", "company_desc"):
+        stmt = stmt.outerjoin(Job.source).outerjoin(Source.company)
 
     if sort_by == "newest_discovered":
         stmt = stmt.order_by(desc(Job.first_seen_at), desc(Job.job_id))
@@ -444,41 +498,48 @@ async def list_jobs(
     elif sort_by == "location_asc":
         stmt = stmt.order_by(asc(Job.location), desc(Job.job_id))
     elif sort_by == "recently_updated":
-        stmt = stmt.order_by(desc(Job.last_seen_at), desc(Job.job_id))
+        stmt = stmt.order_by(
+            Job.source_updated_at.desc().nullslast(),
+            Job.source_created_at.desc().nullslast(),
+            desc(Job.job_id),
+        )
 
-    # Paginate
     stmt = stmt.offset((page - 1) * page_size).limit(page_size)
     job_rows = (await session.execute(stmt)).scalars().all()
 
     items = []
     for j in job_rows:
-        comp_name = j.source.company.name if (j.source and j.source.company) else j.source_id
-        comp_domain = extract_domain(j.source.company.website_url if (j.source and j.source.company) else None, comp_name)
+        company_obj = j.source.company if j.source else None
+        comp_name = company_obj.name if company_obj else j.source_id
+        comp_domain = extract_domain(company_obj.website_url if company_obj else None, comp_name)
         active_skills = j.latest_skills
-        active_experience = j.latest_experience
         req_skills = [s.skill_id for s in active_skills if s.requirement_type == "required"]
         pref_skills = [s.skill_id for s in active_skills if s.requirement_type == "preferred"]
-
-        exp_years = [r.min_years for r in active_experience if r.min_years is not None]
-        min_y = min(exp_years) if exp_years else None
 
         items.append(JobListItemSchema(
             job_id=j.job_id,
             company=comp_name,
+            company_id=j.source.company_id if j.source else None,
             company_domain=comp_domain,
             canonical_category=j.canonical_category,
             title=j.title,
             department=j.department,
             location=j.location,
             work_arrangement=j.work_arrangement,
+            seniority=j.seniority or UNSPECIFIED,
             apply_url=j.apply_url,
             requisition_id=j.requisition_id,
             internal_job_id=j.internal_job_id,
             is_demo=j.is_demo,
             first_seen_at=j.first_seen_at,
             last_seen_at=j.last_seen_at,
+            source_created_at=j.source_created_at,
+            source_updated_at=j.source_updated_at,
             lifecycle_status=j.lifecycle_status,
-            primary_min_yoe=min_y,
+            primary_min_yoe=j.required_yoe,
+            salary_min=j.salary_min,
+            salary_max=j.salary_max,
+            salary_currency=j.salary_currency,
             required_skills=req_skills,
             preferred_skills=pref_skills,
         ))
@@ -487,6 +548,7 @@ async def list_jobs(
         total_count=total_count,
         page=page,
         page_size=page_size,
+        total_pages=total_pages,
         jobs=items,
         sector_counts=sector_counts,
     )
@@ -526,6 +588,7 @@ async def get_job_detail(job_id: str, session: AsyncSession = Depends(get_db_ses
         department=job.department,
         location=job.location,
         work_arrangement=job.work_arrangement,
+        seniority=job.seniority or UNSPECIFIED,
         apply_url=job.apply_url,
         source_url=job.source_url,
         requisition_id=job.requisition_id,
@@ -533,7 +596,13 @@ async def get_job_detail(job_id: str, session: AsyncSession = Depends(get_db_ses
         is_demo=job.is_demo,
         first_seen_at=job.first_seen_at,
         last_seen_at=job.last_seen_at,
+        source_created_at=job.source_created_at,
+        source_updated_at=job.source_updated_at,
         lifecycle_status=job.lifecycle_status,
+        primary_min_yoe=job.required_yoe,
+        salary_min=job.salary_min,
+        salary_max=job.salary_max,
+        salary_currency=job.salary_currency,
         consecutive_missing_syncs=job.consecutive_missing_syncs,
         normalized_description=job.normalized_description,
         description_hash=job.description_hash,
@@ -592,6 +661,24 @@ async def get_top_skills(
         top_skills=top_items,
     )
 
+@router.get("/skills/taxonomy", response_model=List[TaxonomySkillSchema])
+async def list_taxonomy_skills(session: AsyncSession = Depends(get_db_session)):
+    """Every skill id the extractor and the candidate profile understand."""
+    skills = (await session.execute(select(TaxonomySkill).order_by(TaxonomySkill.skill_name))).scalars().all()
+    return [TaxonomySkillSchema(skill_id=s.skill_id, skill_name=s.skill_name, category=s.category) for s in skills]
+
+@router.get("/skills/resolve", response_model=TaxonomySkillSchema)
+async def resolve_skill_text(
+    q: str = Query(..., min_length=1, description="Free-typed skill, e.g. 'C++' or 'c#'"),
+    session: AsyncSession = Depends(get_db_session),
+):
+    """Maps typed skill text to a taxonomy id (C++ -> cpp, C# -> csharp). 404 for unknown skills."""
+    spec = resolve_skill(q)
+    row = await session.get(TaxonomySkill, spec["skill_id"]) if spec else None
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"'{q}' is not a known skill in the taxonomy")
+    return TaxonomySkillSchema(skill_id=row.skill_id, skill_name=row.skill_name, category=row.category)
+
 @router.get("/telemetry/skills", response_model=TelemetryResponse)
 async def get_skills_telemetry(
     category: Optional[str] = Query(None, description="Optional sector filter"),
@@ -617,6 +704,7 @@ async def list_sources(session: AsyncSession = Depends(get_db_session)):
             base_url=s.base_url,
             health_status=s.health_status,
             enabled=s.enabled,
+            feed_status=ConnectorManager.feed_status(s.provider_type, s.enabled),
             last_successful_sync=s.last_successful_sync,
             last_attempted_sync=s.last_attempted_sync,
             last_error=s.last_error,
@@ -647,103 +735,153 @@ async def get_sync_status():
         summary=GLOBAL_SYNC_STATE.summary,
     )
 
-async def _run_sync_task(run_id: str, target_source_id: Optional[str] = None):
-    """Background task executing connectors and safe reconciliation with per-source locking and real-time state tracking."""
-    async with async_session_factory() as session:
-        GLOBAL_SYNC_STATE.is_active = True
-        GLOBAL_SYNC_STATE.current_run_id = run_id
-        GLOBAL_SYNC_STATE.status = "running"
-        GLOBAL_SYNC_STATE.started_at = datetime.now(timezone.utc)
-        GLOBAL_SYNC_STATE.completed_at = None
-        GLOBAL_SYNC_STATE.completed_sources = 0
-        GLOBAL_SYNC_STATE.last_error = None
+def _owns_sync_state(run_id: str) -> bool:
+    """A run only reports into the shared state while it is the most recently dispatched run."""
+    return GLOBAL_SYNC_STATE.current_run_id == run_id
 
-        sources_stmt = select(Source).where(Source.enabled == True)
-        if target_source_id:
-            sources_stmt = sources_stmt.where(Source.source_id == target_source_id)
-        sources = (await session.execute(sources_stmt)).scalars().all()
-        GLOBAL_SYNC_STATE.total_sources = len(sources)
+async def _sync_source(session: AsyncSession, source_id: str, run_id: str, summary_stats: dict) -> bool:
+    """Fetches and reconciles one source. Returns False when the connector or reconciliation failed."""
+    source = await session.get(Source, source_id)
+    if source is None:
+        return False
+    source_cfg = {
+        "source_id": source.source_id,
+        "company_id": source.company_id,
+        "provider_type": source.provider_type,
+        "base_url": source.base_url,
+        "board_token": source.board_token,
+        "endpoint": source.endpoint,
+        "allowed_hosts": source.allowed_hosts,
+        "timeout_seconds": source.timeout_seconds,
+        "concurrency_limit": source.concurrency_limit,
+    }
 
-        has_errors = False
-        summary_stats = {"jobs_discovered": 0, "jobs_created": 0, "jobs_updated": 0, "jobs_rejected": 0}
+    raw_jobs: list = []
+    pagination_complete = False
+    req_count = 0
+    error_msg = None
+    try:
+        raw_jobs, pagination_complete, req_count = await ConnectorManager.fetch_source_jobs(source_cfg)
+    except Exception as e:
+        error_msg = str(e) or e.__class__.__name__
+        pagination_complete = False
 
-        try:
-            for source in sources:
-                source_lock = SOURCE_LOCKS.setdefault(source.source_id, asyncio.Lock())
-                if source_lock.locked():
-                    continue
+    try:
+        reconciler = SafeReconciliationEngine(session)
+        sync_run = await reconciler.execute_sync_run(
+            source=source,
+            raw_postings=raw_jobs,
+            pagination_complete=pagination_complete,
+            requests_count=req_count,
+            error_message=error_msg,
+        )
+    except Exception as e:
+        await session.rollback()
+        logger.exception(f"Reconciliation failed for {source_id}")
+        error_msg = f"Reconciliation failed for {source_id}: {e}"
+        sync_run = None
 
-                GLOBAL_SYNC_STATE.current_source = source.source_id
-                async with source_lock:
-                    source_cfg = {
-                        "source_id": source.source_id,
-                        "company_id": source.company_id,
-                        "provider_type": source.provider_type,
-                        "base_url": source.base_url,
-                        "board_token": source.board_token,
-                        "endpoint": source.endpoint,
-                        "allowed_hosts": source.allowed_hosts,
-                        "timeout_seconds": source.timeout_seconds,
-                        "concurrency_limit": source.concurrency_limit,
-                    }
+    if error_msg and _owns_sync_state(run_id):
+        GLOBAL_SYNC_STATE.last_error = error_msg
+    if sync_run is not None:
+        summary_stats["jobs_discovered"] += sync_run.jobs_discovered
+        summary_stats["jobs_created"] += sync_run.jobs_created
+        summary_stats["jobs_updated"] += sync_run.jobs_updated
+        summary_stats["jobs_rejected"] += sync_run.jobs_rejected
+    return error_msg is None
 
-                    raw_jobs = []
-                    pagination_complete = False
-                    req_count = 0
-                    error_msg = None
+async def _run_sync_task(run_id: str, target_source_id: Optional[str] = None, held_lock: Optional[asyncio.Lock] = None):
+    """
+    Background task executing connectors and safe reconciliation.
+    `held_lock` was acquired by the request handler (SYNC_LOCK for a full sync, the source lock
+    for a single-source sync) and is always released here, whatever fails.
+    """
+    has_errors = False
+    summary_stats = {"jobs_discovered": 0, "jobs_created": 0, "jobs_updated": 0, "jobs_rejected": 0}
+    try:
+        if _owns_sync_state(run_id):
+            GLOBAL_SYNC_STATE.is_active = True
+            GLOBAL_SYNC_STATE.status = "running"
 
-                    try:
-                        raw_jobs, pagination_complete, req_count = await ConnectorManager.fetch_source_jobs(source_cfg)
-                    except Exception as e:
-                        error_msg = str(e)
-                        pagination_complete = False
-                        has_errors = True
-                        GLOBAL_SYNC_STATE.last_error = error_msg
+        async with async_session_factory() as session:
+            sources_stmt = select(Source.source_id).where(Source.enabled == True)
+            if target_source_id:
+                sources_stmt = sources_stmt.where(Source.source_id == target_source_id)
+            source_ids = list((await session.execute(sources_stmt)).scalars().all())
+            if _owns_sync_state(run_id):
+                GLOBAL_SYNC_STATE.total_sources = len(source_ids)
 
-                    reconciler = SafeReconciliationEngine(session)
-                    sync_run = await reconciler.execute_sync_run(
-                        source=source,
-                        raw_postings=raw_jobs,
-                        pagination_complete=pagination_complete,
-                        requests_count=req_count,
-                        error_message=error_msg,
-                    )
-                    summary_stats["jobs_discovered"] += sync_run.jobs_discovered
-                    summary_stats["jobs_created"] += sync_run.jobs_created
-                    summary_stats["jobs_updated"] += sync_run.jobs_updated
-                    summary_stats["jobs_rejected"] += sync_run.jobs_rejected
+            for source_id in source_ids:
+                if _owns_sync_state(run_id):
+                    GLOBAL_SYNC_STATE.current_source = source_id
+                if target_source_id:
+                    ok = await _sync_source(session, source_id, run_id, summary_stats)
+                else:
+                    # Waits for any single-source sync of the same board to finish first.
+                    async with SOURCE_LOCKS.setdefault(source_id, asyncio.Lock()):
+                        ok = await _sync_source(session, source_id, run_id, summary_stats)
+                has_errors = has_errors or not ok
+                if _owns_sync_state(run_id):
                     GLOBAL_SYNC_STATE.completed_sources += 1
 
+        if _owns_sync_state(run_id):
             GLOBAL_SYNC_STATE.status = "partial" if has_errors else "completed"
             GLOBAL_SYNC_STATE.summary = summary_stats
-        except Exception as e:
+    except Exception as e:
+        logger.exception(f"Sync run {run_id} failed")
+        if _owns_sync_state(run_id):
             GLOBAL_SYNC_STATE.status = "failed"
-            GLOBAL_SYNC_STATE.last_error = str(e)
-        finally:
+            GLOBAL_SYNC_STATE.last_error = str(e) or e.__class__.__name__
+    finally:
+        if _owns_sync_state(run_id):
             GLOBAL_SYNC_STATE.is_active = False
             GLOBAL_SYNC_STATE.current_source = None
             GLOBAL_SYNC_STATE.completed_at = datetime.now(timezone.utc)
+        if held_lock is not None and held_lock.locked():
+            held_lock.release()
 
 @router.post("/sync")
 async def trigger_sync(
     background_tasks: BackgroundTasks,
     source_id: Optional[str] = Query(None, description="Optional specific source ID to sync"),
+    session: AsyncSession = Depends(get_db_session),
 ):
     """Triggers background ingest & safe reconciliation across enabled career portals."""
-    import uuid
     if source_id:
-        lock = SOURCE_LOCKS.setdefault(source_id, asyncio.Lock())
-        if lock.locked():
+        source = await session.get(Source, source_id)
+        if source is None:
+            raise HTTPException(status_code=404, detail=f"Source '{source_id}' not found")
+        if not source.enabled:
+            feed = ConnectorManager.feed_status(source.provider_type, source.enabled)
+            reason = "has no public job feed" if feed == "no_public_feed" else "is disabled"
+            return {"status": "skipped", "run_id": None, "message": f"Source '{source_id}' {reason}."}
+        if SYNC_LOCK.locked():
+            return {"status": "in_progress", "run_id": GLOBAL_SYNC_STATE.current_run_id, "message": "A full career sync is already in progress and includes this source."}
+        held_lock = SOURCE_LOCKS.setdefault(source_id, asyncio.Lock())
+        if held_lock.locked():
             return {"status": "in_progress", "run_id": GLOBAL_SYNC_STATE.current_run_id, "message": f"Sync for source '{source_id}' is already in progress."}
-    elif SYNC_LOCK.locked() or GLOBAL_SYNC_STATE.is_active:
-        return {"status": "in_progress", "run_id": GLOBAL_SYNC_STATE.current_run_id, "message": "A career sync run is already in progress."}
+    else:
+        held_lock = SYNC_LOCK
+        if held_lock.locked():
+            return {"status": "in_progress", "run_id": GLOBAL_SYNC_STATE.current_run_id, "message": "A career sync run is already in progress."}
 
-    run_id = str(uuid.uuid4())
-    GLOBAL_SYNC_STATE.is_active = True
-    GLOBAL_SYNC_STATE.current_run_id = run_id
-    GLOBAL_SYNC_STATE.status = "queued"
-    GLOBAL_SYNC_STATE.started_at = datetime.now(timezone.utc)
-    background_tasks.add_task(_run_sync_task, run_id=run_id, target_source_id=source_id)
+    await held_lock.acquire()
+    try:
+        run_id = str(uuid.uuid4())
+        GLOBAL_SYNC_STATE.is_active = True
+        GLOBAL_SYNC_STATE.current_run_id = run_id
+        GLOBAL_SYNC_STATE.status = "queued"
+        GLOBAL_SYNC_STATE.started_at = datetime.now(timezone.utc)
+        GLOBAL_SYNC_STATE.completed_at = None
+        GLOBAL_SYNC_STATE.current_source = None
+        GLOBAL_SYNC_STATE.total_sources = 0
+        GLOBAL_SYNC_STATE.completed_sources = 0
+        GLOBAL_SYNC_STATE.last_error = None
+        GLOBAL_SYNC_STATE.summary = {}
+        background_tasks.add_task(_run_sync_task, run_id=run_id, target_source_id=source_id, held_lock=held_lock)
+    except Exception:
+        held_lock.release()
+        raise
     return {
         "status": "triggered",
         "run_id": run_id,
@@ -784,20 +922,30 @@ async def update_candidate_profile(
     update_data: CandidateProfileUpdate,
     session: AsyncSession = Depends(get_db_session),
 ):
-    """Updates candidate skills, evidence levels, and overall YOE."""
+    """Updates candidate skills, evidence levels, and (only when sent) overall YOE."""
+    known_skill_ids = set((await session.execute(select(TaxonomySkill.skill_id))).scalars().all())
+    unknown = sorted({s.skill_id for s in update_data.skills if s.skill_id not in known_skill_ids})
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"Unknown skill ids (not in taxonomy): {unknown}")
+
     cand = await session.get(CandidateProfile, "default", options=[selectinload(CandidateProfile.skills)])
     if not cand:
         cand = CandidateProfile(candidate_id="default")
         session.add(cand)
 
     cand.name = update_data.name
-    cand.overall_yoe = update_data.overall_yoe
+    if "overall_yoe" in update_data.model_fields_set:
+        cand.overall_yoe = update_data.overall_yoe
 
     # Clear existing skills and replace
     for old_s in cand.skills:
         await session.delete(old_s)
 
+    seen_ids = set()
     for new_s in update_data.skills:
+        if new_s.skill_id in seen_ids:
+            continue
+        seen_ids.add(new_s.skill_id)
         cand.skills.append(CandidateSkillEvidence(
             candidate_id="default",
             skill_id=new_s.skill_id,

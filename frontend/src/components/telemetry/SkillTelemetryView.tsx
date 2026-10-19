@@ -84,8 +84,12 @@ export const SkillTelemetryView: React.FC<SkillTelemetryViewProps> = ({
           <span className="font-mono text-[10px] text-outline uppercase tracking-wider font-semibold">
             Telemetry Window
           </span>
-          <span className="text-3xl font-bold text-primary my-1">30-Day DoD</span>
-          <span className="font-mono text-[10px] text-outline">Safe Zero-Baseline Delta</span>
+          <span className="text-3xl font-bold text-primary my-1">30-Day Delta</span>
+          <span className="font-mono text-[10px] text-outline">
+            {telemetry.has_prior_window
+              ? `Live jobs now vs ${telemetry.prior_window_jobs} live jobs 30–60 days ago`
+              : 'Not enough history yet (needs a prior 30-day window)'}
+          </span>
         </div>
       </div>
 
@@ -117,8 +121,8 @@ export const SkillTelemetryView: React.FC<SkillTelemetryViewProps> = ({
             <tbody className="divide-y divide-outline-variant/40">
               {telemetry.skills_telemetry.map((item) => {
                 const delta = item.period_over_period_delta_pct;
-                const isNew = delta === null || delta === undefined;
-                const isPositive = !isNew && delta >= 0;
+                const noDelta = delta === null || delta === undefined;
+                const isPositive = !noDelta && delta >= 0;
                 return (
                   <tr key={item.skill_id} className="hover:bg-surface-container transition-colors">
                     <td className="p-3 font-bold text-on-surface flex items-center gap-2">
@@ -139,9 +143,12 @@ export const SkillTelemetryView: React.FC<SkillTelemetryViewProps> = ({
                       </div>
                     </td>
                     <td className="p-3 text-right font-semibold">
-                      {isNew ? (
-                        <span className="text-primary font-mono text-[10px] px-1.5 py-0.5 rounded bg-primary/15 border border-primary/30">
-                          NEW
+                      {noDelta ? (
+                        <span
+                          className="text-outline font-mono text-[10px] px-1.5 py-0.5 rounded bg-surface-container-high border border-outline-variant"
+                          title="No prior 30-day window of live jobs to compare against"
+                        >
+                          Not enough history
                         </span>
                       ) : (
                         <span className={isPositive ? 'text-secondary' : 'text-error'}>

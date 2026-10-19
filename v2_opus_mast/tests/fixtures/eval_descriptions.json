@@ -1,0 +1,124 @@
+{
+  "test_cases": [
+    {
+      "id": "go_verb_adversarial",
+      "title": "Senior Backend Infrastructure Engineer",
+      "department": "Platform Services",
+      "description": "You will go to production daily, go through incident reviews, and collaborate across teams. We build high-throughput microservices using Golang and Python.",
+      "is_engineering": true,
+      "expected_skills": ["go", "python"],
+      "unexpected_skills": [],
+      "expected_min_yoe": null
+    },
+    {
+      "id": "c_family_disambiguation",
+      "title": "Principal Embedded Firmware & Tooling Developer",
+      "department": "Hardware Systems",
+      "description": "Requirements:\nMust have 5+ years of modern C++ (C++17/20) and Embedded C.\nDesirable:\nExperience with C# for internal tools.",
+      "is_engineering": true,
+      "expected_skills": ["cpp", "c", "csharp"],
+      "unexpected_skills": [],
+      "expected_req_types": {
+        "cpp": "required",
+        "c": "required",
+        "csharp": "preferred"
+      },
+      "expected_min_yoe": 5
+    },
+    {
+      "id": "negation_handling",
+      "title": "Graphics Programmer",
+      "department": "Rendering",
+      "description": "Must have strong knowledge of Vulkan and HLSL.\nNote: CUDA is not required for this role.",
+      "is_engineering": true,
+      "expected_skills": ["vulkan", "shaders"],
+      "unexpected_skills": ["cuda"],
+      "expected_min_yoe": null
+    },
+    {
+      "id": "hr_rejection",
+      "title": "Senior Technical Recruiter",
+      "department": "Talent Acquisition",
+      "description": "Looking for a seasoned recruiter to hire top-tier software engineers and AI researchers.",
+      "is_engineering": false,
+      "expected_skills": [],
+      "unexpected_skills": []
+    },
+    {
+      "id": "marketing_rejection",
+      "title": "Director of Product Marketing",
+      "department": "Growth & Marketing",
+      "description": "Lead marketing campaigns for our developer platform and cloud computing solutions.",
+      "is_engineering": false,
+      "expected_skills": [],
+      "unexpected_skills": []
+    },
+    {
+      "id": "art_rejection",
+      "title": "Lead 3D Concept Artist",
+      "department": "Art",
+      "description": "Create high-fidelity character models and concept art for AAA game titles.",
+      "is_engineering": false,
+      "expected_skills": [],
+      "unexpected_skills": []
+    },
+    {
+      "id": "finance_rejection",
+      "title": "Senior Corporate Accountant",
+      "department": "Finance",
+      "description": "Manage quarterly financial reporting, GAAP compliance, and audit preparation.",
+      "is_engineering": false,
+      "expected_skills": [],
+      "unexpected_skills": []
+    },
+    {
+      "id": "gpu_cuda_systems",
+      "title": "GPU Systems Software Engineer",
+      "department": "Core Compute",
+      "description": "Requires 5+ years in low-level systems programming. Must be fluent in CUDA, C++, and TensorRT acceleration on Linux.",
+      "is_engineering": true,
+      "expected_skills": ["cuda", "cpp", "tensorrt"],
+      "unexpected_skills": ["python", "rust"],
+      "expected_min_yoe": 5
+    },
+    {
+      "id": "gameplay_unreal",
+      "title": "Senior Gameplay Programmer",
+      "department": "Game Engineering",
+      "description": "Seeking 3+ years experience in Unreal Engine and modern C++ for AAA game development.",
+      "is_engineering": true,
+      "expected_skills": ["unreal_engine", "cpp"],
+      "unexpected_skills": ["unity"],
+      "expected_min_yoe": 3
+    },
+    {
+      "id": "distributed_ai_cloud",
+      "title": "AI Infrastructure Engineer",
+      "department": "Platform Reliability",
+      "description": "Minimum 4 years of software engineering experience. Expertise with PyTorch, Docker, Kubernetes, and Python is mandatory.",
+      "is_engineering": true,
+      "expected_skills": ["pytorch", "docker", "kubernetes", "python"],
+      "unexpected_skills": [],
+      "expected_min_yoe": 4
+    },
+    {
+      "id": "hybrid_pm_rejection",
+      "title": "Technical Talent Operations Coordinator",
+      "department": "People Ops",
+      "description": "Coordinate interviews for engineering candidates and manage HR scheduling systems.",
+      "is_engineering": false,
+      "expected_skills": [],
+      "unexpected_skills": []
+    },
+    {
+      "id": "embedded_rtos_firmware",
+      "title": "Staff Firmware Engineer",
+      "department": "Silicon Platforms",
+      "description": "Requires at least 6 years of embedded C and RTOS development on ARM microcontrollers. Firmware debugging via JTAG.",
+      "is_engineering": true,
+      "expected_skills": ["c", "rtos", "firmware", "arm"],
+      "unexpected_skills": [],
+      "expected_min_yoe": 6
+    }
+  ]
+}

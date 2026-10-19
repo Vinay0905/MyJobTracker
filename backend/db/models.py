@@ -140,6 +140,11 @@ class Job(Base):
     department = Column(String(128), nullable=True)
     location = Column(String(256), nullable=False)
     work_arrangement = Column(String(32), default="unknown", nullable=False)  # remote | hybrid | onsite | unknown
+    seniority = Column(String(32), default="unspecified", nullable=False)  # intern | associate | mid | senior | staff | principal | unspecified
+    required_yoe = Column(Integer, nullable=True)  # governing_min_years() of the latest snapshot; None = unspecified
+    salary_min = Column(Float, nullable=True)  # annual, in salary_currency, only when the posting states it
+    salary_max = Column(Float, nullable=True)
+    salary_currency = Column(String(8), nullable=True)
     employment_type = Column(String(64), nullable=True)
     country = Column(String(64), nullable=True)
     region = Column(String(64), nullable=True)

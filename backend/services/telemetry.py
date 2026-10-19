@@ -6,6 +6,9 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from backend.db.models import Job, JobSkillEvidence, Source, TaxonomySkill, LifecycleStatus
 
+def _as_utc(dt: datetime) -> datetime:
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+
 class TelemetryEngine:
     """
     Computes market telemetry, skill share percentages, company breadth,
@@ -21,7 +24,7 @@ class TelemetryEngine:
         
         data_quality_warnings = []
         for src in sources:
-            if src.health_status == "DEGRADED":
+            if src.enabled and src.health_status == "DEGRADED":
                 data_quality_warnings.append(
                     f"Source '{src.source_id}' is degraded ({src.last_error or 'Network anomaly'}). Telemetry counts may undercount live openings."
                 )
@@ -49,6 +52,8 @@ class TelemetryEngine:
                 "denominator_count": 0,
                 "source_coverage_count": len(distinct_sources),
                 "newly_observed_cohort_total": 0,
+                "has_prior_window": False,
+                "prior_window_jobs": 0,
                 "data_quality_warnings": data_quality_warnings,
                 "skills_telemetry": [],
             }
@@ -83,32 +88,48 @@ class TelemetryEngine:
                 if is_newly_observed:
                     skill_newly_observed_cohort[skill_id].add(job.job_id)
 
-        # 4. Check historical snapshot baseline (Window B: 30-60 days ago) for genuine market trend
-        from backend.db.models import JobSnapshot, JobSkillEvidence
-        prior_snapshots_stmt = select(JobSnapshot).where(
-            JobSnapshot.observed_at >= sixty_days_ago,
-            JobSnapshot.observed_at < thirty_days_ago,
-        )
-        prior_snapshots = (await self.session.execute(prior_snapshots_stmt)).scalars().all()
-        has_prior_baseline = len(prior_snapshots) >= 10
+        # 4. 30-day delta: both windows use live (non-demo) jobs in the same sector.
+        # Current window = jobs active now (latest snapshot skills).
+        # Prior window = jobs already listed 30 days ago and still seen during days 30-60,
+        # using the snapshot that was current 30 days ago.
+        live_current_jobs = [j for j in jobs if not j.is_demo]
+        current_skill_jobs = defaultdict(set)
+        for job in live_current_jobs:
+            for s in job.latest_skills:
+                current_skill_jobs[s.skill_id].add(job.job_id)
 
+        prior_stmt = select(Job).options(
+            selectinload(Job.skills),
+            selectinload(Job.snapshots),
+        ).where(
+            Job.is_demo == False,
+            Job.first_seen_at < thirty_days_ago,
+            Job.last_seen_at >= sixty_days_ago,
+        )
+        if category:
+            prior_stmt = prior_stmt.where(Job.canonical_category.ilike(f"%{category}%"))
+        prior_jobs = (await self.session.execute(prior_stmt)).scalars().all()
+
+        prior_skill_jobs = defaultdict(set)
+        prior_jobs_count = 0
+        for job in prior_jobs:
+            snaps_then = [s for s in job.snapshots if _as_utc(s.observed_at) < thirty_days_ago]
+            if not snaps_then:
+                continue
+            snapshot_then = max(snaps_then, key=lambda s: _as_utc(s.observed_at)).snapshot_id
+            prior_jobs_count += 1
+            for s in job.skills:
+                if s.snapshot_id == snapshot_then:
+                    prior_skill_jobs[s.skill_id].add(job.job_id)
+
+        has_prior_baseline = prior_jobs_count >= 10 and len(live_current_jobs) > 0
         prior_skill_shares: Dict[str, float] = {}
         if has_prior_baseline:
-            prior_snapshot_ids = [s.snapshot_id for s in prior_snapshots]
-            prior_jobs_count = len({s.job_id for s in prior_snapshots})
-            if prior_jobs_count > 0:
-                prior_evidence_stmt = select(JobSkillEvidence.skill_id, JobSkillEvidence.job_id).where(
-                    JobSkillEvidence.snapshot_id.in_(prior_snapshot_ids)
-                )
-                prior_evidence = (await self.session.execute(prior_evidence_stmt)).all()
-                prior_skill_jobs = defaultdict(set)
-                for s_id, j_id in prior_evidence:
-                    prior_skill_jobs[s_id].add(j_id)
-                for s_id, j_ids in prior_skill_jobs.items():
-                    prior_skill_shares[s_id] = (len(j_ids) / prior_jobs_count) * 100.0
+            for s_id, j_ids in prior_skill_jobs.items():
+                prior_skill_shares[s_id] = (len(j_ids) / prior_jobs_count) * 100.0
         else:
             data_quality_warnings.append(
-                "Historical 30-day market demand shift requires complete snapshots across prior 30d window (>=60d total history). Exposing newly observed discovery cohort instead."
+                "Not enough history for a 30-day trend: the prior window (30-60 days ago) needs at least 10 live jobs in this sector. Showing the newly observed cohort instead."
             )
 
         # Load skill metadata names
@@ -123,13 +144,10 @@ class TelemetryEngine:
             breadth = len(skill_companies_map[skill_id])
             cohort_count = len(skill_newly_observed_cohort[skill_id])
 
-            # Period delta is only computed if genuine historical snapshots exist in prior window
             period_delta = None
             if has_prior_baseline:
-                if skill_id in prior_skill_shares:
-                    period_delta = round(skill_share - prior_skill_shares[skill_id], 1)
-                else:
-                    period_delta = round(skill_share, 1)
+                live_share = (len(current_skill_jobs[skill_id]) / len(live_current_jobs)) * 100.0
+                period_delta = round(live_share - prior_skill_shares.get(skill_id, 0.0), 1)
 
             telemetry_records.append({
                 "skill_id": skill_id,
@@ -151,6 +169,8 @@ class TelemetryEngine:
             "denominator_count": total_eligible_jobs,
             "source_coverage_count": len(distinct_sources),
             "newly_observed_cohort_total": len(newly_observed_jobs),
+            "has_prior_window": has_prior_baseline,
+            "prior_window_jobs": prior_jobs_count,
             "data_quality_warnings": data_quality_warnings,
             "skills_telemetry": telemetry_records,
         }

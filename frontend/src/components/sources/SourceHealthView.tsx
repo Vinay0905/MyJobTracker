@@ -51,6 +51,14 @@ export const SourceHealthView: React.FC<SourceHealthViewProps> = ({
       <div className="grid grid-cols-1 md:grid-cols-3 gap-space-md">
         {sources.map((src) => {
           const isHealthy = src.health_status === 'HEALTHY';
+          const noFeed = src.feed_status === 'no_public_feed';
+          const isDisabled = src.feed_status === 'disabled';
+          const badgeLabel = noFeed ? 'No public feed' : isDisabled ? 'Disabled' : src.health_status;
+          const badgeClass = noFeed || isDisabled
+            ? 'bg-amber-500/10 text-amber-300 border border-amber-500/30'
+            : isHealthy
+            ? 'bg-secondary/15 text-secondary border border-secondary/30'
+            : 'bg-error-container/20 text-error border border-error/30';
           return (
             <div
               key={src.source_id}
@@ -62,20 +70,22 @@ export const SourceHealthView: React.FC<SourceHealthViewProps> = ({
                     {src.provider_type}
                   </span>
                   <span
-                    className={`font-mono text-[10px] px-1.5 py-0.5 rounded font-bold ${
-                      isHealthy
-                        ? 'bg-secondary/15 text-secondary border border-secondary/30'
-                        : 'bg-error-container/20 text-error border border-error/30'
-                    }`}
+                    className={`font-mono text-[10px] px-1.5 py-0.5 rounded font-bold ${badgeClass}`}
+                    title={noFeed ? 'No public unauthenticated job feed exists for this employer; it is not synced.' : undefined}
                   >
-                    {src.health_status}
+                    {badgeLabel}
                   </span>
                 </div>
                 <h4 className="text-base font-bold text-on-surface mt-1">{src.company_name}</h4>
                 <p className="font-mono text-[11px] text-on-surface-variant truncate mt-0.5">
                   {src.base_url}
                 </p>
-                {src.last_error && (
+                {noFeed && (
+                  <p className="font-mono text-[10px] text-amber-300/90 mt-2">
+                    Careers site requires a browser session or blocks API access. Demo fixtures, if seeded, appear only in Demo mode.
+                  </p>
+                )}
+                {src.last_error && !noFeed && !isDisabled && (
                   <p className="font-mono text-[10px] text-error bg-error-container/10 border border-error/20 p-1.5 rounded mt-2">
                     {src.last_error}
                   </p>
@@ -89,7 +99,9 @@ export const SourceHealthView: React.FC<SourceHealthViewProps> = ({
                     ? new Date(src.last_successful_sync).toLocaleTimeString()
                     : 'Pending'}
                 </span>
-                <span className="text-secondary font-medium">Auto-poll: 60m</span>
+                <span className={noFeed || isDisabled ? 'text-outline' : 'text-secondary font-medium'}>
+                  {noFeed || isDisabled ? 'Not synced' : 'Auto-poll: 60m'}
+                </span>
               </div>
             </div>
           );

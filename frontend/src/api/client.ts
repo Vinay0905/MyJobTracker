@@ -6,9 +6,11 @@ import {
   SourceItem,
   SyncRunItem,
   CandidateProfile,
+  CandidateSkill,
   GapAnalysisResponse,
   CompanyItem,
   SyncStatus,
+  TaxonomySkill,
 } from '../types/api';
 
 const API_BASE = '/api';
@@ -16,7 +18,8 @@ const API_BASE = '/api';
 export async function fetchJobs(
   filters: {
     category?: string | null;
-    company?: string | null;
+    /** Exact company_ids */
+    companies?: string[];
     sort_by?: string | null;
     location?: string | null;
     role_focus?: string | string[] | null;
@@ -24,7 +27,11 @@ export async function fetchJobs(
     required_skill?: string | null;
     preferred_skill?: string | null;
     search?: string | null;
-    max_required_yoe?: number | null;
+    seniority?: string[];
+    pay_bands?: string[];
+    yoe_min?: number | null;
+    yoe_max?: number | null;
+    include_unspecified_yoe?: boolean;
     include_demo?: boolean;
     page?: number;
     pageSize?: number;
@@ -33,7 +40,7 @@ export async function fetchJobs(
 ): Promise<JobsResponse> {
   const params = new URLSearchParams();
   if (filters.category) params.set('category', filters.category);
-  if (filters.company) params.set('company', filters.company);
+  if (filters.companies && filters.companies.length > 0) params.set('company', filters.companies.join(','));
   if (filters.sort_by) params.set('sort_by', filters.sort_by);
   if (filters.location && filters.location !== 'Global') params.set('location', filters.location);
   if (filters.role_focus) {
@@ -43,9 +50,11 @@ export async function fetchJobs(
   if (filters.skill) params.set('skill', filters.skill);
   if (filters.required_skill) params.set('required_skill', filters.required_skill);
   if (filters.preferred_skill) params.set('preferred_skill', filters.preferred_skill);
-  if (filters.max_required_yoe !== undefined && filters.max_required_yoe !== null) {
-    params.set('max_required_yoe', String(filters.max_required_yoe));
-  }
+  if (filters.seniority && filters.seniority.length > 0) params.set('seniority', filters.seniority.join(','));
+  if (filters.pay_bands && filters.pay_bands.length > 0) params.set('pay_band', filters.pay_bands.join(','));
+  if (filters.yoe_min !== undefined && filters.yoe_min !== null) params.set('yoe_min', String(filters.yoe_min));
+  if (filters.yoe_max !== undefined && filters.yoe_max !== null) params.set('yoe_max', String(filters.yoe_max));
+  if (filters.include_unspecified_yoe === false) params.set('include_unspecified_yoe', 'false');
   if (filters.search) params.set('search', filters.search);
   if (filters.include_demo) params.set('include_demo', 'true');
   if (filters.page) params.set('page', String(filters.page));
@@ -121,14 +130,30 @@ export async function fetchCandidateProfile(signal?: AbortSignal): Promise<Candi
   return res.json();
 }
 
-export async function updateCandidateProfile(profile: Partial<CandidateProfile>): Promise<{ status: string }> {
+/** Omit `overall_yoe` to keep the stored value; the backend only writes years when the field is sent. */
+export async function updateCandidateProfile(profile: {
+  name: string;
+  overall_yoe?: number | null;
+  skills: Array<Pick<CandidateSkill, 'skill_id' | 'proficiency' | 'evidence_level' | 'notes'>>;
+}): Promise<{ status: string }> {
   const res = await fetch(`${API_BASE}/candidate/profile`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(profile),
   });
   if (!res.ok) {
-    throw new Error(`Failed to update profile: ${res.statusText}`);
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.detail || `Failed to update profile: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+/** Maps typed skill text to a taxonomy id (C++ -> cpp). Returns null for unknown skills. */
+export async function resolveSkill(text: string): Promise<TaxonomySkill | null> {
+  const res = await fetch(`${API_BASE}/skills/resolve?q=${encodeURIComponent(text)}`);
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    throw new Error(`Failed to resolve skill: ${res.statusText}`);
   }
   return res.json();
 }

@@ -22,23 +22,35 @@ export interface FieldChange {
   new_value?: string | null;
 }
 
+export type Seniority = 'intern' | 'associate' | 'mid' | 'senior' | 'staff' | 'principal' | 'unspecified';
+export type PayBand = 'under_100k' | '100_150k' | '150_200k' | '200k_plus' | 'unknown';
+export type FeedStatus = 'live' | 'disabled' | 'no_public_feed';
+
 export interface JobListItem {
   job_id: string;
   company: string;
+  company_id?: string | null;
   company_domain?: string | null;
   canonical_category: string;
   title: string;
   department?: string | null;
   location: string;
   work_arrangement: string;
+  seniority?: Seniority | string;
   apply_url: string;
   requisition_id?: string | null;
   internal_job_id?: string | null;
   is_demo?: boolean;
   first_seen_at: string;
   last_seen_at: string;
+  source_created_at?: string | null;
+  source_updated_at?: string | null;
   lifecycle_status: string;
+  /** null = the posting states no parsable years requirement (shown as "unspecified"). */
   primary_min_yoe?: number | null;
+  salary_min?: number | null;
+  salary_max?: number | null;
+  salary_currency?: string | null;
   required_skills: string[];
   preferred_skills: string[];
 }
@@ -63,6 +75,7 @@ export interface JobsResponse {
   total_count: number;
   page: number;
   page_size: number;
+  total_pages: number;
   jobs: JobListItem[];
   sector_counts?: Record<string, number>;
 }
@@ -86,6 +99,8 @@ export interface SkillTelemetryItem {
 
 export interface TelemetryResponse {
   total_eligible_jobs: number;
+  has_prior_window: boolean;
+  prior_window_jobs: number;
   data_quality_warnings: string[];
   skills_telemetry: SkillTelemetryItem[];
 }
@@ -105,7 +120,15 @@ export interface CompanyItem {
   name: string;
   canonical_category: string;
   website_url?: string | null;
+  domain?: string | null;
+  feed_status: FeedStatus;
   active_jobs_count: number;
+}
+
+export interface TaxonomySkill {
+  skill_id: string;
+  skill_name: string;
+  category: string;
 }
 
 export interface SyncStatus {
@@ -129,6 +152,7 @@ export interface SourceItem {
   base_url: string;
   health_status: 'HEALTHY' | 'DEGRADED' | 'OFFLINE';
   enabled: boolean;
+  feed_status: FeedStatus;
   last_successful_sync?: string | null;
   last_attempted_sync?: string | null;
   last_error?: string | null;
@@ -162,7 +186,7 @@ export interface CandidateSkill {
 export interface CandidateProfile {
   candidate_id: string;
   name: string;
-  overall_yoe: number;
+  overall_yoe: number | null;
   skills: CandidateSkill[];
 }
 
@@ -178,16 +202,17 @@ export interface RoleGapAnalysis {
   satisfied_preferred: Array<{ skill_id: string; evidence_level: string; job_evidence: string }>;
   missing_preferred: Array<{ skill_id: string; job_evidence: string }>;
   has_experience_gap: boolean;
-  yoe_deficit: number;
+  yoe_deficit: number | null;
   yoe_gap_warning?: string | null;
-  candidate_yoe: number;
+  candidate_yoe: number | null;
   job_min_yoe?: number | null;
   is_one_skill_away: boolean;
+  one_skill_gap?: { skill_id: string; job_evidence: string; requirement_type: 'required' | 'preferred' } | null;
   apply_url: string;
 }
 
 export interface GapAnalysisResponse {
-  candidate_yoe: number;
+  candidate_yoe: number | null;
   candidate_skills_count: number;
   total_roles_analyzed: number;
   one_skill_away_count: number;

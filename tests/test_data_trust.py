@@ -51,6 +51,7 @@ async def test_workday_never_fabricates_synthetic_descriptions():
         "allowed_hosts": '["nvidia.wd5.myworkdayjobs.com"]',
         "timeout_seconds": 5.0,
         "concurrency_limit": 2,
+        "search_text": "",
     }
 
     connector = WorkdayConnector(source_cfg)

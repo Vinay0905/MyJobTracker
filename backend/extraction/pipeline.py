@@ -2,7 +2,7 @@ from typing import Dict, Any, List, Optional
 from backend.extraction.normalizer import clean_html_to_text, compute_description_hash, segment_description
 from backend.extraction.filter import is_engineering_role
 from backend.extraction.taxonomy import extract_skills_with_evidence
-from backend.extraction.experience import extract_experience_requirements
+from backend.extraction.experience import extract_experience_requirements, governing_min_years
 
 def process_job_description(
     title: str,
@@ -30,12 +30,6 @@ def process_job_description(
     skills = extract_skills_with_evidence(sections)
     experience = extract_experience_requirements(normalized_text)
 
-    # Derive primary min_experience_years for top-level query convenience
-    overall_exp = [e["min_years"] for e in experience if e["experience_scope"] == "overall_professional" and e["min_years"] is not None]
-    primary_min_yoe = min(overall_exp) if overall_exp else (
-        min([e["min_years"] for e in experience if e["min_years"] is not None]) if experience else None
-    )
-
     return {
         "is_engineering": True,
         "rejection_reason": None,
@@ -44,5 +38,5 @@ def process_job_description(
         "sections": {k: len(v) for k, v in sections.items()},
         "skills": skills,
         "experience": experience,
-        "primary_min_yoe": primary_min_yoe,
+        "primary_min_yoe": governing_min_years(experience),
     }

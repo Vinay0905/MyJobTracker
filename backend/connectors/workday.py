@@ -1,5 +1,6 @@
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
 import json
+import asyncio
 import logging
 from backend.connectors.base import ResilientHTTPClient
 
@@ -14,6 +15,12 @@ class WorkdayConnector:
         self.source_id = source_config["source_id"]
         self.base_url = source_config["base_url"].rstrip("/")
         self.endpoint = source_config.get("endpoint", "/wday/cxs/nvidia/NVIDIAExternalCareerSite/jobs")
+        # Empty search walks the full catalog; a non-empty searchText is only a slice (never closure-safe).
+        raw_search = source_config.get("search_text", "")
+        self.search_text = raw_search if raw_search is not None else ""
+        self._catalog_search_filtered = bool(str(self.search_text).strip())
+        endpoint_parts = [p for p in self.endpoint.split("/") if p]
+        self.site_name = endpoint_parts[-2] if len(endpoint_parts) >= 2 else "NVIDIAExternalCareerSite"
         allowed_hosts = json.loads(source_config.get("allowed_hosts", "[]"))
 
         self.client = ResilientHTTPClient(
@@ -26,25 +33,31 @@ class WorkdayConnector:
         """
         Paginates through Workday CXS job listings and fetches detail descriptions.
         Returns: (jobs_list, pagination_complete, request_count)
+
+        pagination_complete is True only when the full catalog was walked: Workday reported a
+        total, every row up to that total was fetched within max_pages, and no search filter
+        narrowed the result set.
         """
         url = f"{self.base_url}{self.endpoint}"
         headers = {
             "Accept": "application/json",
             "Content-Type": "application/json",
         }
-        
+
         limit = 20
         offset = 0
         total_requests = 0
-        all_postings = []
-        pagination_complete = False
+        all_postings: List[Dict[str, Any]] = []
+        seen_ids = set()
+        reported_total: Optional[int] = None
+        reached_end = False
 
         for page in range(max_pages):
             payload = {
                 "appliedFacets": {},
                 "limit": limit,
                 "offset": offset,
-                "searchText": "Engineer",
+                "searchText": self.search_text or "",
             }
 
             try:
@@ -60,41 +73,63 @@ class WorkdayConnector:
                     logger.error(f"Workday response schema invalid: missing 'jobPostings' key at {url}")
                     return all_postings, False, total_requests
 
-                postings = data.get("jobPostings", [])
-                total_count = data.get("total", 0)
+                postings = data.get("jobPostings") or []
+                # Workday reports `total` on the first page and often 0 on later pages.
+                page_total = data.get("total")
+                if reported_total is None and isinstance(page_total, int) and page_total > 0:
+                    reported_total = page_total
 
                 if not postings:
-                    pagination_complete = True
+                    reached_end = True
                     break
 
                 for post in postings:
                     ext_path = post.get("externalPath", "")
                     bullet_fields = post.get("bulletFields", [])
                     req_id = bullet_fields[0] if bullet_fields else ext_path.split("/")[-1]
-                    posting_id = post.get("bulletFields", [ext_path])[-1] or ext_path
+                    posting_id = str(post.get("bulletFields", [ext_path])[-1] or ext_path)
+                    if posting_id in seen_ids:
+                        continue
+                    seen_ids.add(posting_id)
 
+                    job_url = f"{self.base_url}/en-US/{self.site_name}{ext_path}"
                     all_postings.append({
-                        "provider_posting_id": str(posting_id),
+                        "provider_posting_id": posting_id,
                         "requisition_id": str(req_id),
                         "title": post.get("title", "").strip(),
-                        "department": "Engineering & Technology",
-                        "location": post.get("locationsText", "Multiple Locations"),
-                        "apply_url": f"{self.base_url}/en-US/NVIDIAExternalCareerSite{ext_path}",
-                        "source_url": f"{self.base_url}/en-US/NVIDIAExternalCareerSite{ext_path}",
+                        "department": None,
+                        "location": post.get("locationsText") or "",
+                        "apply_url": job_url,
+                        "source_url": job_url,
                         "external_path": ext_path,
-                        "posted_on": post.get("postedOn", "Recent"),
+                        "posted_on": post.get("postedOn"),
                         "raw_html": "",
                         "description_status": "pending",
                     })
 
                 offset += len(postings)
-                if offset >= total_count or len(postings) < limit:
-                    pagination_complete = True
+                if reported_total is not None and offset >= reported_total:
+                    reached_end = True
+                    break
+                if len(postings) < limit:
+                    reached_end = True
                     break
 
             except Exception as e:
                 logger.error(f"Workday page fetch failed at offset {offset}: {e}")
                 return all_postings, False, total_requests
+
+        pagination_complete = (
+            reached_end
+            and reported_total is not None
+            and offset >= reported_total
+            and not self._catalog_search_filtered
+        )
+        if not pagination_complete:
+            logger.info(
+                f"Workday {self.source_id}: catalog not fully walked "
+                f"(fetched {offset}, total {reported_total}, search '{self.search_text}'); closures disabled for this run"
+            )
 
         # Retrieve real job descriptions from the Workday CXS job detail endpoint
         async def _fetch_detail(p: Dict[str, Any]) -> None:
@@ -122,6 +157,9 @@ class WorkdayConnector:
                         p["requisition_id"] = str(posting_info["jobReqId"])
                     if posting_info.get("startDate"):
                         p["posted_on"] = posting_info["startDate"]
+                        p["source_created_at"] = posting_info["startDate"]
+                    if posting_info.get("remoteType"):
+                        p["work_arrangement"] = posting_info["remoteType"]
                 else:
                     logger.warning(f"Workday detail fetch HTTP {resp.status_code} for {detail_url}")
                     p["raw_html"] = ""
@@ -132,7 +170,6 @@ class WorkdayConnector:
                 p["description_status"] = "unavailable"
 
         if all_postings:
-            import asyncio
             await asyncio.gather(*[_fetch_detail(p) for p in all_postings])
 
         return all_postings, pagination_complete, total_requests

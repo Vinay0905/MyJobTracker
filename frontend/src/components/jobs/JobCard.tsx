@@ -9,6 +9,16 @@ interface JobCardProps {
   isSelected?: boolean;
 }
 
+const formatAmount = (value: number): string =>
+  value >= 1000 ? `${Math.round(value / 1000)}k` : String(Math.round(value));
+
+/** Formats a stated annual salary in its own currency; returns null when the posting states none. */
+export const formatPay = (min?: number | null, max?: number | null, currency?: string | null): string | null => {
+  if (min === null || min === undefined || !currency) return null;
+  const top = max ?? min;
+  return top !== min ? `${currency} ${formatAmount(min)}–${formatAmount(top)}` : `${currency} ${formatAmount(min)}`;
+};
+
 export const JobCard: React.FC<JobCardProps> = ({ job, onInspect, onSelectSkill, isSelected = false }) => {
   const isGameStudio = job.canonical_category.toLowerCase().includes('game');
   const isSilicon =
@@ -26,6 +36,10 @@ export const JobCard: React.FC<JobCardProps> = ({ job, onInspect, onSelectSkill,
     : isGameStudio
     ? 'text-tertiary'
     : 'text-primary';
+
+  const postedDate = job.source_created_at ? new Date(job.source_created_at) : null;
+  const seniority = job.seniority && job.seniority !== 'unspecified' ? job.seniority : null;
+  const payLabel = formatPay(job.salary_min, job.salary_max, job.salary_currency);
 
   return (
     <article
@@ -54,6 +68,14 @@ export const JobCard: React.FC<JobCardProps> = ({ job, onInspect, onSelectSkill,
                 <span className={`font-mono text-[10px] ${badgeTextColor} font-medium`}>
                   {job.canonical_category}
                 </span>
+                {job.is_demo && (
+                  <span
+                    className="font-mono text-[9px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/40 font-bold uppercase"
+                    title="Synthetic demo fixture, not a live listing from this employer"
+                  >
+                    Demo
+                  </span>
+                )}
               </div>
               <h3
                 onClick={() => onInspect(job.job_id)}
@@ -64,8 +86,13 @@ export const JobCard: React.FC<JobCardProps> = ({ job, onInspect, onSelectSkill,
             </div>
           </div>
 
-          <span className="font-mono text-[10px] text-outline px-1.5 py-0.5 rounded bg-surface-container-lowest border border-outline-variant/60 shrink-0">
-            {new Date(job.first_seen_at).toLocaleDateString()}
+          <span
+            className="font-mono text-[10px] text-outline px-1.5 py-0.5 rounded bg-surface-container-lowest border border-outline-variant/60 shrink-0"
+            title={postedDate ? 'Posted date reported by the employer' : 'Employer did not report a posted date; first seen by DevRadar'}
+          >
+            {postedDate
+              ? `Posted ${postedDate.toLocaleDateString()}`
+              : `Seen ${new Date(job.first_seen_at).toLocaleDateString()}`}
           </span>
         </div>
 
@@ -75,19 +102,32 @@ export const JobCard: React.FC<JobCardProps> = ({ job, onInspect, onSelectSkill,
             <span className="material-symbols-outlined text-xs text-outline">location_on</span>
             {job.location}
           </span>
-          {job.primary_min_yoe !== null && job.primary_min_yoe !== undefined && (
+          <span>•</span>
+          <span className="flex items-center gap-1" title="Minimum years from the posting's requirement lines">
+            <span className="material-symbols-outlined text-xs text-outline">work_history</span>
+            {job.primary_min_yoe !== null && job.primary_min_yoe !== undefined
+              ? `${job.primary_min_yoe}+ YOE`
+              : <span className="text-outline italic">YOE unspecified</span>}
+          </span>
+          {seniority && (
             <>
               <span>•</span>
-              <span className="flex items-center gap-1">
-                <span className="material-symbols-outlined text-xs text-outline">work_history</span>
-                {job.primary_min_yoe}+ YOE
-              </span>
+              <span className="capitalize text-primary">{seniority}</span>
             </>
           )}
-          {job.work_arrangement && (
+          {job.work_arrangement && job.work_arrangement !== 'unknown' && (
             <>
               <span>•</span>
               <span className="capitalize text-outline">{job.work_arrangement}</span>
+            </>
+          )}
+          {payLabel && (
+            <>
+              <span>•</span>
+              <span className="flex items-center gap-1 text-secondary" title="Annual salary stated in the posting">
+                <span className="material-symbols-outlined text-xs">payments</span>
+                {payLabel}
+              </span>
             </>
           )}
         </div>

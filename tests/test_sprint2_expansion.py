@@ -33,6 +33,7 @@ async def expansion_session():
             lifecycle_status=LifecycleStatus.ACTIVE.value,
             normalized_description="Develop game AI, behavior trees, and NPC logic in C++.",
             description_hash="hash101",
+            required_yoe=2,
         )
         session.add(j1)
         await session.flush()
@@ -58,6 +59,7 @@ async def expansion_session():
             lifecycle_status=LifecycleStatus.ACTIVE.value,
             normalized_description="Design large scale distributed physics simulation and rigid body solvers.",
             description_hash="hash102",
+            required_yoe=8,
         )
         session.add(j2)
         await session.flush()
@@ -92,7 +94,7 @@ async def expansion_session():
     await test_engine.dispose()
 
 @pytest.mark.asyncio
-async def test_0_to_6_yoe_filter_behavior(expansion_session: AsyncSession):
+async def test_years_range_filter_behavior(expansion_session: AsyncSession):
     async def override_get_db():
         yield expansion_session
 
@@ -100,21 +102,30 @@ async def test_0_to_6_yoe_filter_behavior(expansion_session: AsyncSession):
     transport = ASGITransport(app=app)
 
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        # Without filter: all 3 jobs returned
+        # Without filter: all 3 jobs returned; the card number is the stored years rule
         resp_all = await ac.get("/api/jobs")
         assert resp_all.status_code == 200
-        jobs_all = resp_all.json()["jobs"]
+        jobs_all = {j["job_id"]: j for j in resp_all.json()["jobs"]}
         assert len(jobs_all) == 3
+        assert jobs_all["test:early"]["primary_min_yoe"] == 2
+        assert jobs_all["test:unspecified"]["primary_min_yoe"] is None
 
-        # With max_required_yoe=6: 8 YOE job excluded, 2 YOE and unspecified YOE included
-        resp_filtered = await ac.get("/api/jobs?max_required_yoe=6")
-        assert resp_filtered.status_code == 200
-        jobs_filtered = resp_filtered.json()["jobs"]
-        filtered_ids = {j["job_id"] for j in jobs_filtered}
-        assert "test:early" in filtered_ids
-        assert "test:unspecified" in filtered_ids
-        assert "test:staff" not in filtered_ids
-        assert len(jobs_filtered) == 2
+        # 0-6 range: 8 YOE job excluded; unspecified stays in the list (labeled unspecified, not "0-6")
+        resp_filtered = await ac.get("/api/jobs?yoe_min=0&yoe_max=6")
+        filtered_ids = {j["job_id"] for j in resp_filtered.json()["jobs"]}
+        assert filtered_ids == {"test:early", "test:unspecified"}
+
+        # Legacy alias still works
+        resp_alias = await ac.get("/api/jobs?max_required_yoe=6")
+        assert {j["job_id"] for j in resp_alias.json()["jobs"]} == filtered_ids
+
+        # Excluding unspecified keeps only roles that state their years
+        resp_strict = await ac.get("/api/jobs?yoe_min=0&yoe_max=6&include_unspecified_yoe=false")
+        assert {j["job_id"] for j in resp_strict.json()["jobs"]} == {"test:early"}
+
+        # Min bound
+        resp_senior = await ac.get("/api/jobs?yoe_min=5&include_unspecified_yoe=false")
+        assert {j["job_id"] for j in resp_senior.json()["jobs"]} == {"test:staff"}
 
     app.dependency_overrides.clear()
 

@@ -5,7 +5,11 @@ guaranteeing strict isolation from live career portal observations.
 
 Usage:
     python -m backend.db.seed_fixtures --seed-demo
+    python -m backend.db.seed_fixtures --seed-demo --include-unsupported
     python -m backend.db.seed_fixtures --reset-demo
+
+Demo fixtures seed against registered sources even when live polling is disabled (EA, Qualcomm, G42).
+Pass --include-unsupported only to seed jobs whose source_id is not in the registry.
 """
 import sys
 import argparse
@@ -17,7 +21,9 @@ from sqlalchemy import select, delete
 from sqlalchemy.orm import selectinload
 
 from backend.db.session import async_session_factory, init_db
+from backend.extraction.attributes import parse_seniority
 from backend.db.models import (
+    Source,
     Job,
     JobSnapshot,
     ExtractionRun,
@@ -224,7 +230,7 @@ DEMO_JOBS = [
     },
     {
         "posting_id": "demo-ea-01",
-        "source_id": "ea_greenhouse",
+        "source_id": "ea_gr8people",
         "requisition_id": "EA-REQ-901",
         "internal_job_id": "INT-EA-01",
         "title": "Senior Frostbite Engine Programmer",
@@ -243,7 +249,7 @@ DEMO_JOBS = [
     },
     {
         "posting_id": "demo-ea-02",
-        "source_id": "ea_greenhouse",
+        "source_id": "ea_gr8people",
         "requisition_id": "EA-REQ-902",
         "internal_job_id": "INT-EA-02",
         "title": "Gameplay Systems & Physics Engineer",
@@ -262,7 +268,7 @@ DEMO_JOBS = [
     },
     {
         "posting_id": "demo-ps-01",
-        "source_id": "playstation_greenhouse",
+        "source_id": "naughtydog_greenhouse",
         "requisition_id": "ND-REQ-601",
         "internal_job_id": "INT-ND-01",
         "title": "Lead Gameplay & Systems Programmer",
@@ -281,11 +287,12 @@ DEMO_JOBS = [
     }
 ]
 
-async def seed_demo_fixtures():
-    """Seeds 10 deterministic demo fixtures marked with is_demo=True."""
+async def seed_demo_fixtures(include_unsupported: bool = False):
+    """Seeds deterministic demo fixtures marked with is_demo=True."""
     await init_db()
     now = datetime.now(timezone.utc)
     seeded_count = 0
+    skipped_sources = set()
 
     async with async_session_factory() as session:
         for d in DEMO_JOBS:
@@ -293,6 +300,12 @@ async def seed_demo_fixtures():
             existing = await session.get(Job, composite_id)
 
             if existing:
+                continue
+
+            source = await session.get(Source, d["source_id"])
+            if source is None:
+                if not include_unsupported:
+                    skipped_sources.add(d["source_id"])
                 continue
 
             desc_hash = hashlib.sha256(d["description"].encode()).hexdigest()
@@ -309,6 +322,8 @@ async def seed_demo_fixtures():
                 department=d["department"],
                 location=d["location"],
                 work_arrangement=d["work_arrangement"],
+                seniority=parse_seniority(d["title"]),
+                required_yoe=d["min_yoe"],
                 apply_url=d["apply_url"],
                 source_url=d["apply_url"],
                 first_seen_at=now,
@@ -380,6 +395,8 @@ async def seed_demo_fixtures():
 
         await session.commit()
     print(f"Successfully seeded {seeded_count} demo jobs (is_demo=True).")
+    if skipped_sources:
+        print(f"Skipped fixtures for unknown sources: {', '.join(sorted(skipped_sources))} (use --include-unsupported to seed them anyway).")
 
 async def reset_demo_fixtures():
     """Removes all demo jobs and cascaded snapshots, extraction runs, and skills."""
@@ -398,11 +415,12 @@ def main():
     parser = argparse.ArgumentParser(description="DevRadar Demo Fixture Management")
     parser.add_argument("--seed-demo", action="store_true", help="Seed deterministic demo jobs (is_demo=True)")
     parser.add_argument("--reset-demo", action="store_true", help="Delete all demo fixtures (is_demo=True)")
+    parser.add_argument("--include-unsupported", action="store_true", help="Also seed fixtures for disabled sources with no public feed")
 
     args = parser.parse_args()
 
     if args.seed_demo:
-        asyncio.run(seed_demo_fixtures())
+        asyncio.run(seed_demo_fixtures(include_unsupported=args.include_unsupported))
     elif args.reset_demo:
         asyncio.run(reset_demo_fixtures())
     else:

@@ -20,6 +20,8 @@ SECTION_PATTERNS = {
     ],
     "PREFERRED_SECTION": [
         r"preferred qualifications",
+        r"preferred requirements",
+        r"preferred experience",
         r"bonus points",
         r"nice to have",
         r"preferred skills",
@@ -48,6 +50,15 @@ SECTION_PATTERNS = {
         r"privacy policy",
     ],
 }
+
+# Preferred headings are checked first so "Preferred Qualifications:" is not swallowed
+# by the bare "qualifications" required-section pattern.
+SECTION_MATCH_ORDER = [
+    "PREFERRED_SECTION",
+    "REQUIRED_SECTION",
+    "RESPONSIBILITIES_SECTION",
+    "COMPANY_BOILERPLATE",
+]
 
 def clean_html_to_text(raw_html: str) -> str:
     """Strips tags, scripts, and styles while preserving clean line breaks and list structure."""
@@ -89,8 +100,8 @@ def segment_description(text: str) -> Dict[str, List[str]]:
         lower_line = stripped.lower()
 
         matched_section = None
-        for sec_name, patterns in SECTION_PATTERNS.items():
-            for pat in patterns:
+        for sec_name in SECTION_MATCH_ORDER:
+            for pat in SECTION_PATTERNS[sec_name]:
                 # Match heading lines (stand-alone title line or short line ending in colon)
                 if re.search(rf"^(?:[\#\*\-•\s]*){pat}[:\s]*$", lower_line) or (
                     stripped.endswith(":") and len(stripped) < 40 and re.search(rf"\b{pat}\b", lower_line)

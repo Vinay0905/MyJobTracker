@@ -51,7 +51,7 @@ class LeverConnector:
                 title = item.get("text", "").strip()
                 categories = item.get("categories", {})
                 dept = categories.get("department") or categories.get("team") or ""
-                loc = categories.get("location") or "Remote / Global"
+                loc = categories.get("location") or ""
                 apply_url = item.get("hostedUrl") or item.get("applyUrl") or f"https://jobs.lever.co/{self.company}/{posting_id}"
                 desc_html = item.get("description") or item.get("descriptionPlain") or ""
 
@@ -65,14 +65,26 @@ class LeverConnector:
                 if extra_reqs:
                     desc_html = f"{desc_html} {' '.join(extra_reqs)}"
 
+                salary_range = item.get("salaryRange") if isinstance(item.get("salaryRange"), dict) else None
+                workplace = item.get("workplaceType")
+
                 results.append({
                     "provider_posting_id": posting_id,
                     "requisition_id": None,
                     "title": title,
                     "department": dept,
                     "location": loc,
+                    "work_arrangement": workplace if workplace and workplace != "unspecified" else None,
                     "apply_url": apply_url,
                     "source_url": apply_url,
+                    "source_created_at": item.get("createdAt"),
+                    "source_updated_at": item.get("updatedAt"),
+                    "salary": {
+                        "min": salary_range.get("min"),
+                        "max": salary_range.get("max"),
+                        "currency": salary_range.get("currency"),
+                        "interval": salary_range.get("interval"),
+                    } if salary_range else None,
                     "raw_html": desc_html,
                     "description_status": "available" if desc_html else "unavailable",
                 })

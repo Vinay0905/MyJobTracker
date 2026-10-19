@@ -13,6 +13,7 @@ const DOMAIN_MAP: Record<string, string> = {
   epicgames: 'epicgames.com',
   nvidia: 'nvidia.com',
   playstation: 'playstation.com',
+  naughtydog: 'naughtydog.com',
   ea: 'ea.com',
   careem: 'careem.com',
   qualcomm: 'qualcomm.com',
@@ -24,12 +25,32 @@ const DOMAIN_MAP: Record<string, string> = {
   weride: 'weride.ai',
 };
 
+// Files present in /public/logos
+const LOCAL_LOGOS = new Set([
+  'arista', 'canonical', 'careem', 'cerebras', 'ea', 'epicgames', 'g42',
+  'naughtydog', 'nvidia', 'playstation', 'qualcomm', 'roblox', 'rockstargames', 'weride',
+]);
+
+/** Accepts "https://www.nvidia.com/careers", "www.nvidia.com", or "nvidia.com" and returns "nvidia.com". */
+const toHostname = (value?: string | null): string | null => {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  try {
+    const host = new URL(trimmed.includes('://') ? trimmed : `https://${trimmed}`).hostname.toLowerCase();
+    return host.replace(/^www\./, '') || null;
+  } catch {
+    return null;
+  }
+};
+
 const getLogoSlug = (name: string): string => {
   const raw = (name || '').toLowerCase().trim();
   if (raw.includes('rockstar')) return 'rockstargames';
   if (raw.includes('epic')) return 'epicgames';
   if (raw.includes('nvidia')) return 'nvidia';
-  if (raw.includes('playstation') || raw.includes('naughty dog') || raw.includes('sony')) return 'playstation';
+  if (raw.includes('naughty dog')) return 'naughtydog';
+  if (raw.includes('playstation') || raw.includes('sony')) return 'playstation';
   if (raw.includes('electronic arts') || raw === 'ea' || raw.includes('respawn')) return 'ea';
   if (raw.includes('careem')) return 'careem';
   if (raw.includes('qualcomm')) return 'qualcomm';
@@ -56,16 +77,16 @@ export const CompanyLogo: React.FC<CompanyLogoProps> = ({
   }, [company, domain]);
 
   const companySlug = getLogoSlug(company);
-  const cleanDomain = domain || DOMAIN_MAP[companySlug] || `${companySlug}.com`;
+  const cleanDomain = toHostname(domain) || DOMAIN_MAP[companySlug] || `${companySlug}.com`;
 
   // Cascading sources:
-  // 1. Local Curated Vector Asset (/logos/{slug}.svg)
+  // 1. Local Curated Vector Asset (/logos/{slug}.svg), only when the file exists
   // 2. Google S2 Favicon API (retina 128px)
   // 3. Clearbit Logo API
   const sources = [
-    `/logos/${companySlug}.svg`,
-    `https://www.google.com/s2/favicons?domain=${cleanDomain}&sz=128`,
-    `https://logo.clearbit.com/${cleanDomain}`,
+    ...(LOCAL_LOGOS.has(companySlug) ? [`/logos/${companySlug}.svg`] : []),
+    `https://www.google.com/s2/favicons?domain=${encodeURIComponent(cleanDomain)}&sz=128`,
+    `https://logo.clearbit.com/${encodeURIComponent(cleanDomain)}`,
   ];
 
   const sizeClasses = {

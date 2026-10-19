@@ -1,4 +1,4 @@
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
 import json
 import logging
 from backend.connectors.base import ResilientHTTPClient
@@ -24,12 +24,29 @@ class AshbyConnector:
             timeout=source_config.get("timeout_seconds", 15.0),
         )
 
+    @staticmethod
+    def _annual_salary(compensation: Any) -> Optional[Dict[str, Any]]:
+        """Picks the salary component Ashby publishes when includeCompensation=true."""
+        if not isinstance(compensation, dict):
+            return None
+        for comp in compensation.get("summaryComponents") or []:
+            if not isinstance(comp, dict) or str(comp.get("compensationType", "")).lower() != "salary":
+                continue
+            interval = str(comp.get("interval") or "")
+            return {
+                "min": comp.get("minValue"),
+                "max": comp.get("maxValue"),
+                "currency": comp.get("currencyCode"),
+                "interval": "year" if "YEAR" in interval.upper() else interval,
+            }
+        return None
+
     async def fetch_jobs(self) -> Tuple[List[Dict[str, Any]], bool, int]:
         """
         Fetches all active jobs with descriptions from the Ashby board API.
         Returns: (jobs_list, pagination_complete, request_count)
         """
-        url = f"{self.base_url}/posting-api/job-board/{self.board_token}"
+        url = f"{self.base_url}/posting-api/job-board/{self.board_token}?includeCompensation=true"
         headers = {"Accept": "application/json"}
         total_requests = 1
 
@@ -51,9 +68,10 @@ class AshbyConnector:
                 posting_id = str(item.get("id"))
                 title = item.get("title", "").strip()
                 dept = item.get("department") or item.get("team") or ""
-                loc = item.get("location") or "Remote / Global"
+                loc = item.get("location") or ""
                 apply_url = item.get("jobUrl") or f"https://jobs.ashbyhq.com/{self.board_token}/{posting_id}"
                 desc_html = item.get("descriptionHtml") or item.get("descriptionPlain") or ""
+                arrangement = item.get("workplaceType") or ("remote" if item.get("isRemote") is True else None)
 
                 results.append({
                     "provider_posting_id": posting_id,
@@ -61,8 +79,12 @@ class AshbyConnector:
                     "title": title,
                     "department": dept,
                     "location": loc,
+                    "work_arrangement": arrangement,
                     "apply_url": apply_url,
                     "source_url": apply_url,
+                    "source_created_at": item.get("publishedAt"),
+                    "source_updated_at": item.get("updatedAt"),
+                    "salary": self._annual_salary(item.get("compensation")),
                     "raw_html": desc_html,
                     "description_status": "available" if desc_html else "unavailable",
                 })

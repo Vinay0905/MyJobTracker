@@ -202,7 +202,7 @@ HTML descriptions are stripped of `<script>`, `<style>`, and tracking tags, pres
 Built on **Vite + React 18 + TypeScript + Tailwind CSS**:
 - **Design Alignment**: Implements the user-specified Color Hunt Palette (`#790D16` Deep Burgundy, `#E5D3AF` Warm Champagne Sand, `#F5EFE1` Parchment Paper, `#AEC4D4` Slate Blue) layered over an obsidian dark wine terminal base (`#131013`, `#1c161b`, `#261e25`).
 - **Interactive Visual Modules**:
-  1. **Job Radar (Stream)**: Responsive live job cards with 3-tier zero-failure logo fallbacks (Clearbit -> Google S2 128px Favicons -> Deterministic gradient monogram badge), searchable target company filtering, 8 deterministic backend sort orders, 0-6 YOE quick filter, direct career page links, and verbatim evidence inspection drawer.
+  1. **Job Radar (Stream)**: Responsive live job cards with 3-tier zero-failure logo fallbacks (Clearbit -> Google S2 128px Favicons -> Deterministic gradient monogram badge), multi-select company (exact `company_id`), level, and stated-pay filters, 8 deterministic backend sort orders, a min/max required-YOE range (roles with no stated years stay listed as "YOE unspecified"), direct career page links, and verbatim evidence inspection drawer.
   2. **Skill Constellation**: Interactive 2D dependency graph of deep-tech systems (Silicon & AI, Game Engine, Edge & Embedded, Cloud & RDMA) with prerequisite paths, downstream impact, and illustrative disclosures.
   3. **Reverse Salary Calculator**: Interactive sandbox modeling tech stack scarcity premiums (CUDA, Triton, RDMA, etc.) and UAE tax-free relocation net compensation equivalence with illustrative modeling disclosures.
   4. **Skill Telemetry**: Ranked skills, 30d cohort trend lines, company breadth, and source coverage metrics.

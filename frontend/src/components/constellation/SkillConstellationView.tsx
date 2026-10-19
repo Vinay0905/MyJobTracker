@@ -3,6 +3,8 @@ import { playKeyClick, playTogglePulse } from '../../utils/audio';
 
 export interface ConstellationNode {
   id: string;
+  /** Taxonomy skill id used by the radar's skill filter */
+  skillId: string;
   name: string;
   track: 'silicon' | 'graphics' | 'edge' | 'infra';
   level: 1 | 2 | 3 | 4; // 1: Foundation, 2: Core, 3: Advanced, 4: Apex Mastery
@@ -19,6 +21,7 @@ const CONSTELLATION_NODES: ConstellationNode[] = [
   // Branch 1: Silicon & AI Acceleration
   {
     id: 'python',
+    skillId: 'python',
     name: 'Python',
     track: 'silicon',
     level: 1,
@@ -32,6 +35,7 @@ const CONSTELLATION_NODES: ConstellationNode[] = [
   },
   {
     id: 'cpp',
+    skillId: 'cpp',
     name: 'C++ Systems Core',
     track: 'silicon',
     level: 1,
@@ -45,6 +49,7 @@ const CONSTELLATION_NODES: ConstellationNode[] = [
   },
   {
     id: 'pytorch_core',
+    skillId: 'pytorch',
     name: 'PyTorch Internals',
     track: 'silicon',
     level: 2,
@@ -58,6 +63,7 @@ const CONSTELLATION_NODES: ConstellationNode[] = [
   },
   {
     id: 'cuda',
+    skillId: 'cuda',
     name: 'CUDA C/C++',
     track: 'silicon',
     level: 3,
@@ -71,6 +77,7 @@ const CONSTELLATION_NODES: ConstellationNode[] = [
   },
   {
     id: 'triton',
+    skillId: 'triton',
     name: 'Triton & CUTLASS',
     track: 'silicon',
     level: 4,
@@ -84,6 +91,7 @@ const CONSTELLATION_NODES: ConstellationNode[] = [
   },
   {
     id: 'flash_attention',
+    skillId: 'gpu_kernels',
     name: 'FlashAttention & Kernel Fusion',
     track: 'silicon',
     level: 4,
@@ -99,6 +107,7 @@ const CONSTELLATION_NODES: ConstellationNode[] = [
   // Branch 2: Game Engine & Real-Time Graphics
   {
     id: 'math_3d',
+    skillId: 'linear_algebra',
     name: '3D Math & Linear Algebra',
     track: 'graphics',
     level: 1,
@@ -112,6 +121,7 @@ const CONSTELLATION_NODES: ConstellationNode[] = [
   },
   {
     id: 'vulkan',
+    skillId: 'vulkan',
     name: 'Vulkan / DirectX 12',
     track: 'graphics',
     level: 2,
@@ -125,6 +135,7 @@ const CONSTELLATION_NODES: ConstellationNode[] = [
   },
   {
     id: 'compute_shaders',
+    skillId: 'shaders',
     name: 'Compute Shaders & Ray Tracing',
     track: 'graphics',
     level: 3,
@@ -138,6 +149,7 @@ const CONSTELLATION_NODES: ConstellationNode[] = [
   },
   {
     id: 'physics_sim',
+    skillId: 'physics_engine',
     name: 'Rigid Body Physics',
     track: 'graphics',
     level: 2,
@@ -151,6 +163,7 @@ const CONSTELLATION_NODES: ConstellationNode[] = [
   },
   {
     id: 'unreal_chaos',
+    skillId: 'physics_middleware',
     name: 'Unreal Chaos & MassEntity',
     track: 'graphics',
     level: 4,
@@ -166,6 +179,7 @@ const CONSTELLATION_NODES: ConstellationNode[] = [
   // Branch 3: Edge AI, Embedded & Autonomous
   {
     id: 'c_lang',
+    skillId: 'c',
     name: 'Low-Level C',
     track: 'edge',
     level: 1,
@@ -179,6 +193,7 @@ const CONSTELLATION_NODES: ConstellationNode[] = [
   },
   {
     id: 'rtos',
+    skillId: 'rtos',
     name: 'FreeRTOS & Embedded POSIX',
     track: 'edge',
     level: 2,
@@ -192,6 +207,7 @@ const CONSTELLATION_NODES: ConstellationNode[] = [
   },
   {
     id: 'device_drivers',
+    skillId: 'device_drivers',
     name: 'Linux Kernel Drivers & DMA',
     track: 'edge',
     level: 3,
@@ -205,6 +221,7 @@ const CONSTELLATION_NODES: ConstellationNode[] = [
   },
   {
     id: 'tinyml',
+    skillId: 'model_quantization',
     name: 'Edge AI & Quantization',
     track: 'edge',
     level: 3,
@@ -218,6 +235,7 @@ const CONSTELLATION_NODES: ConstellationNode[] = [
   },
   {
     id: 'autonomous_stack',
+    skillId: 'simulation_frameworks',
     name: 'Autonomous Vehicle Sensor Fusion',
     track: 'edge',
     level: 4,
@@ -233,6 +251,7 @@ const CONSTELLATION_NODES: ConstellationNode[] = [
   // Branch 4: AI Infrastructure & High-Performance Cloud
   {
     id: 'linux_sre',
+    skillId: 'linux_kernel',
     name: 'Linux Systems & Networking',
     track: 'infra',
     level: 1,
@@ -246,6 +265,7 @@ const CONSTELLATION_NODES: ConstellationNode[] = [
   },
   {
     id: 'dist_systems',
+    skillId: 'distributed_systems',
     name: 'Distributed Consensus & Sockets',
     track: 'infra',
     level: 2,
@@ -259,6 +279,7 @@ const CONSTELLATION_NODES: ConstellationNode[] = [
   },
   {
     id: 'rdma_net',
+    skillId: 'rdma_networking',
     name: 'RDMA & InfiniBand Networks',
     track: 'infra',
     level: 3,
@@ -272,6 +293,7 @@ const CONSTELLATION_NODES: ConstellationNode[] = [
   },
   {
     id: 'k8s_gpu',
+    skillId: 'kubernetes',
     name: 'Kubernetes & Container Runtimes',
     track: 'infra',
     level: 2,
@@ -285,6 +307,7 @@ const CONSTELLATION_NODES: ConstellationNode[] = [
   },
   {
     id: 'gpu_cluster_orchestration',
+    skillId: 'distributed_training',
     name: 'Large-Scale AI Cluster Infra',
     track: 'infra',
     level: 4,
@@ -668,7 +691,7 @@ export const SkillConstellationView: React.FC<SkillConstellationViewProps> = ({
               <button
                 onClick={() => {
                   playKeyClick();
-                  onSelectSkillFilter(activeFocusNode.id);
+                  onSelectSkillFilter(activeFocusNode.skillId);
                 }}
                 className="w-full py-2.5 px-3 rounded-xl bg-primary text-on-primary font-mono text-xs font-bold hover:bg-primary/90 transition-all flex items-center justify-center gap-1.5 shadow-md shadow-primary/20"
               >
@@ -676,7 +699,7 @@ export const SkillConstellationView: React.FC<SkillConstellationViewProps> = ({
                 <span>Lock Radar to {activeFocusNode.name}</span>
               </button>
               <span className="text-[10px] font-mono text-outline text-center block">
-                Navigates to Radar with this skill active
+                Navigates to Radar filtered by skill <code>{activeFocusNode.skillId}</code>
               </span>
             </div>
           )}

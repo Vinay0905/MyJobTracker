@@ -407,6 +407,33 @@ PREFERRED_CLUES = [
     r"desirable",
 ]
 
+def _compact(value: str) -> str:
+    return re.sub(r"[\s_\-]", "", value.lower())
+
+def resolve_skill(text: str, taxonomy: List[Dict[str, Any]] = TAXONOMY_SPECS) -> Optional[Dict[str, Any]]:
+    """
+    Maps free-typed skill text ("C++", "c#", "k8s") to a taxonomy entry.
+    Returns None for anything the taxonomy does not know.
+    """
+    query = (text or "").strip()
+    if not query:
+        return None
+    lower = query.lower()
+    compact = _compact(query)
+
+    for spec in taxonomy:
+        name = spec["skill_name"].lower()
+        if lower in (spec["skill_id"], name) or compact in (_compact(spec["skill_id"]), _compact(name)):
+            return spec
+
+    matches = [spec for spec in taxonomy if re.search(spec["pattern"], lower, flags=re.IGNORECASE)]
+    if len(matches) == 1:
+        return matches[0]
+    full_matches = [spec for spec in matches if re.fullmatch(spec["pattern"], lower, flags=re.IGNORECASE)]
+    if full_matches:
+        return full_matches[0]
+    return None
+
 def split_into_sentences(text: str) -> List[str]:
     """Splits text into clean sentence units using punctuation, newlines, and bullet points."""
     raw = re.split(r"(?<=[.!?])\s+|\n+|[-•*]\s+", text)

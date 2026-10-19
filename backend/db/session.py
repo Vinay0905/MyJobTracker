@@ -1,9 +1,15 @@
 import os
 import json
+import logging
 from typing import AsyncGenerator
-from sqlalchemy import text
+from sqlalchemy import text, select, func
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from backend.db.models import Base, Company, Source, TaxonomySkill, CandidateProfile
+from backend.db.models import Base, Company, Source, Job, TaxonomySkill, CandidateProfile
+from backend.extraction.attributes import parse_seniority, parse_work_arrangement, parse_salary
+from backend.extraction.experience import governing_min_years
+
+logger = logging.getLogger("devradar.db")
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./devradar.db")
 
@@ -86,15 +92,16 @@ DEFAULT_COMPANIES = [
         "canonical_category": "Game Studio",
         "website_url": "https://www.ea.com",
         "source": {
-            "source_id": "ea_greenhouse",
-            "provider_type": "greenhouse",
-            "base_url": "https://boards-api.greenhouse.io",
-            "board_token": "ea",
-            "allowed_hosts": json.dumps(["boards-api.greenhouse.io", "boards.greenhouse.io", "ea.com", "jobs.ea.com"]),
-            "enabled": False,  # Verified: Greenhouse token 'ea' returns 404. Flagged unsupported until custom ATS integrated.
-            "polling_interval_minutes": 60,
+            # EA's careers site is GR8 People. An unauthenticated GET to ea.gr8people.com/jobs
+            # returns CloudFront 403 ("Request forbidden by administrative rules"), so there is no public feed.
+            "source_id": "ea_gr8people",
+            "provider_type": "gr8people",
+            "base_url": "https://ea.gr8people.com",
+            "allowed_hosts": json.dumps(["ea.gr8people.com"]),
+            "enabled": False,
+            "polling_interval_minutes": 120,
             "timeout_seconds": 15.0,
-            "concurrency_limit": 3,
+            "concurrency_limit": 1,
         }
     },
     {
@@ -133,11 +140,28 @@ DEFAULT_COMPANIES = [
     },
     {
         "company_id": "playstation",
-        "name": "PlayStation Studios (Naughty Dog)",
+        "name": "PlayStation Studios",
+        "canonical_category": "Game Studio",
+        "website_url": "https://www.playstation.com",
+        "source": {
+            "source_id": "playstation_greenhouse",
+            "provider_type": "greenhouse",
+            "base_url": "https://boards-api.greenhouse.io",
+            "board_token": "sonyinteractiveentertainmentglobal",
+            "allowed_hosts": json.dumps(["boards-api.greenhouse.io", "boards.greenhouse.io"]),
+            "enabled": True,
+            "polling_interval_minutes": 60,
+            "timeout_seconds": 15.0,
+            "concurrency_limit": 3,
+        }
+    },
+    {
+        "company_id": "naughtydog",
+        "name": "Naughty Dog",
         "canonical_category": "Game Studio",
         "website_url": "https://www.naughtydog.com",
         "source": {
-            "source_id": "playstation_greenhouse",
+            "source_id": "naughtydog_greenhouse",
             "provider_type": "greenhouse",
             "base_url": "https://boards-api.greenhouse.io",
             "board_token": "naughtydog",
@@ -335,8 +359,23 @@ DEFAULT_TAXONOMY_SKILLS = [
     ("sre", "SRE & Reliability", "Deployment & Cloud"),
 ]
 
-async def _migrate_sqlite_schema(conn):
-    """Safely adds missing columns to existing SQLite database tables."""
+# Source ids that were replaced by a differently-named source for the same company.
+RETIRED_SOURCE_IDS = {"ea_greenhouse"}
+
+DERIVED_JOB_COLUMNS = {
+    "seniority": "VARCHAR(32) DEFAULT 'unspecified' NOT NULL",
+    "required_yoe": "INTEGER",
+    "salary_min": "FLOAT",
+    "salary_max": "FLOAT",
+    "salary_currency": "VARCHAR(8)",
+}
+
+async def _migrate_sqlite_schema(conn) -> bool:
+    """
+    Safely adds missing columns to existing SQLite database tables.
+    Returns True when derived job columns were just added and need a backfill.
+    """
+    needs_backfill = False
     try:
         # 1. Check jobs table
         res = await conn.execute(text("PRAGMA table_info(jobs)"))
@@ -348,6 +387,10 @@ async def _migrate_sqlite_schema(conn):
                 await conn.execute(text("ALTER TABLE jobs ADD COLUMN is_demo BOOLEAN DEFAULT 0 NOT NULL"))
             if "latest_snapshot_id" not in job_cols:
                 await conn.execute(text("ALTER TABLE jobs ADD COLUMN latest_snapshot_id INTEGER"))
+            for col_name, col_ddl in DERIVED_JOB_COLUMNS.items():
+                if col_name not in job_cols:
+                    await conn.execute(text(f"ALTER TABLE jobs ADD COLUMN {col_name} {col_ddl}"))
+                    needs_backfill = True
 
         # 2. Check job_skill_evidence table
         res = await conn.execute(text("PRAGMA table_info(job_skill_evidence)"))
@@ -390,12 +433,54 @@ async def _migrate_sqlite_schema(conn):
     except Exception:
         # Ignore if tables do not exist yet
         pass
+    return needs_backfill
+
+async def _backfill_derived_job_fields(session: AsyncSession) -> None:
+    """Fills seniority, years, arrangement, and pay for jobs ingested before those columns existed."""
+    jobs = (await session.execute(
+        select(Job).options(selectinload(Job.experience_requirements), selectinload(Job.snapshots))
+    )).scalars().all()
+    for job in jobs:
+        job.seniority = parse_seniority(job.title)
+        job.required_yoe = governing_min_years(job.latest_experience)
+        if job.is_demo:
+            if not job.work_arrangement or job.work_arrangement == "unknown":
+                job.work_arrangement = parse_work_arrangement(None, job.location)
+            continue
+        # Live jobs used to be stored with a hardcoded "hybrid".
+        job.work_arrangement = parse_work_arrangement(None, job.location)
+        salary = parse_salary(job.normalized_description)
+        job.salary_min = salary["salary_min"]
+        job.salary_max = salary["salary_max"]
+        job.salary_currency = salary["salary_currency"]
+    logger.info(f"Backfilled derived fields for {len(jobs)} jobs")
+
+async def _retire_sources(session: AsyncSession) -> None:
+    for source_id in RETIRED_SOURCE_IDS:
+        retired = await session.get(Source, source_id)
+        if retired is None:
+            continue
+        legacy_demo = (await session.execute(
+            select(Job).where(Job.source_id == source_id, Job.is_demo == True)
+        )).scalars().all()
+        for job in legacy_demo:
+            await session.delete(job)
+
+        live_jobs = (await session.execute(
+            select(func.count(Job.job_id)).where(Job.source_id == source_id, Job.is_demo == False)
+        )).scalar() or 0
+        if live_jobs:
+            retired.enabled = False
+        else:
+            await session.delete(retired)
 
 async def init_db(custom_engine=None):
     """Initializes tables and seeds default registries."""
     eng = custom_engine or engine
+    needs_backfill = False
     async with eng.begin() as conn:
-        await _migrate_sqlite_schema(conn)
+        if conn.dialect.name == "sqlite":
+            needs_backfill = await _migrate_sqlite_schema(conn)
         await conn.run_sync(Base.metadata.create_all)
 
     # Seed default data
@@ -445,16 +530,36 @@ async def init_db(custom_engine=None):
                 session.add(src)
             else:
                 # Synchronize configuration-managed fields while preserving runtime telemetry
+                configured_identity = (
+                    source_cfg["provider_type"], source_cfg["base_url"],
+                    source_cfg.get("board_token"), source_cfg.get("endpoint"),
+                )
+                stored_identity = (
+                    existing_source.provider_type, existing_source.base_url,
+                    existing_source.board_token, existing_source.endpoint,
+                )
+                if configured_identity != stored_identity:
+                    logger.warning(
+                        f"Source {existing_source.source_id} now points at {configured_identity} "
+                        f"(was {stored_identity}); postings from the old board close through normal reconciliation"
+                    )
                 existing_source.provider_type = source_cfg["provider_type"]
                 existing_source.base_url = source_cfg["base_url"]
                 existing_source.board_token = source_cfg.get("board_token")
                 existing_source.endpoint = source_cfg.get("endpoint")
                 existing_source.allowed_hosts = source_cfg.get("allowed_hosts", "[]")
-                existing_source.enabled = source_cfg.get("enabled", True)
+                # Never re-enable a source the user turned off; config can only switch off feeds that do not exist.
+                if not source_cfg.get("enabled", True):
+                    existing_source.enabled = False
                 existing_source.polling_interval_minutes = source_cfg.get("polling_interval_minutes", 60)
                 existing_source.timeout_seconds = source_cfg.get("timeout_seconds", 15.0)
                 existing_source.concurrency_limit = source_cfg.get("concurrency_limit", 2)
-                # Note: health_status, last_successful_sync, last_attempted_sync, last_error are preserved!
+                # Note: enabled, health_status, last_successful_sync, last_attempted_sync, last_error are preserved!
+
+        await _retire_sources(session)
+
+        if needs_backfill:
+            await _backfill_derived_job_fields(session)
 
         # 3. Seed Candidate Profile
         existing_candidate = await session.get(CandidateProfile, "default")
